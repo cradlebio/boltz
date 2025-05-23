@@ -380,3 +380,7 @@ vdw_radii = [
     2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0
 ]
 # fmt: on
+if __name__ == "__main__":
+    print(2 * num_tokens + 1 + len(pocket_contact_info))
+    print(num_tokens)
+

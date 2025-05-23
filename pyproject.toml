@@ -30,6 +30,7 @@ dependencies = [
     "scipy==1.13.1",
     "trifast>=0.1.11",
     "numba==0.61.0",
+    "jaxtyping"
 ]
 
 [project.scripts]
@@ -85,3 +86,5 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "regression",
 ]
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -2,6 +2,7 @@ from typing import Dict, Tuple
 
 from fairscale.nn.checkpoint.checkpoint_activations import checkpoint_wrapper
 import torch
+from jaxtyping import Float, Int64, Float32
 from torch import Tensor, nn
 
 from boltz.data import const
@@ -22,7 +23,7 @@ from boltz.model.modules.encoders import AtomAttentionEncoder
 
 
 class InputEmbedder(nn.Module):
-    """Input embedder."""
+    """Transforms the input features (sequence, msa profile, etc.) into a single embedding."""
 
     def __init__(
         self,
@@ -39,28 +40,17 @@ class InputEmbedder(nn.Module):
     ) -> None:
         """Initialize the input embedder.
 
-        Parameters
-        ----------
-        atom_s : int
-            The atom single representation dimension.
-        atom_z : int
-            The atom pair representation dimension.
-        token_s : int
-            The single token representation dimension.
-        token_z : int
-            The pair token representation dimension.
-        atoms_per_window_queries : int
-            The number of atoms per window for queries.
-        atoms_per_window_keys : int
-            The number of atoms per window for keys.
-        atom_feature_dim : int
-            The atom feature dimension.
-        atom_encoder_depth : int
-            The atom encoder depth.
-        atom_encoder_heads : int
-            The atom encoder heads.
-        no_atom_encoder : bool, optional
-            Whether to use the atom encoder, by default False
+        Params:
+            atom_s: the atom single representation embedding size.
+            atom_z: the atom pair representation embedding size.
+            token_s: the single token representation embedding size.
+            token_z: the pair token representation embedding size.
+            atoms_per_window_queries: the number of atoms per window for queries.
+            atoms_per_window_keys: the number of atoms per window for keys.
+            atom_feature_dim: the atom feature dimension.
+            atom_encoder_depth: the atom encoder depth.
+            atom_encoder_heads: the atom encoder heads.
+            no_atom_encoder: whether to use the atom encoder (if disabled, the corresponding embedding is set to zero).
 
         """
         super().__init__()
@@ -81,25 +71,23 @@ class InputEmbedder(nn.Module):
                 structure_prediction=False,
             )
 
-    def forward(self, feats: Dict[str, Tensor]) -> Tensor:
+    def forward(self, feats: dict[str, Tensor]) -> Float32[Tensor, " batch len embed=455"]:
         """Perform the forward pass.
 
-        Parameters
-        ----------
-        feats : Dict[str, Tensor]
-            Input features
+        Params:
+            feats : input features
 
-        Returns
-        -------
-        Tensor
-            The embedded tokens.
-
+        Return:
+            the embedded tokens.
         """
-        # Load relevant features
-        res_type = feats["res_type"]
-        profile = feats["profile"]
-        deletion_mean = feats["deletion_mean"].unsqueeze(-1)
-        pocket_feature = feats["pocket_feature"]
+        # Residue type is a one-hot encoding of the 33 token types (amino acids, nucleotides, etc.)
+        res_type: Int64[Tensor, " batch len num_tokens=33"] = feats["res_type"]
+        # amino acid frequency in the MSA
+        profile: Float32[Tensor, " batch len num_tokens=33"] = feats["profile"]
+        # Average number of deletions per position in the MSA (see featurizer.py for details)
+        deletion_mean: Float32[Tensor, " batch len 1"] = feats["deletion_mean"].unsqueeze(-1)
+        # Pocket feature is a one-hot encoding of the 4 pocket types (see const.py::pocket_contact_info)
+        pocket_feature: Int64[Tensor, " batch len 4"] = feats["pocket_feature"]
 
         # Compute input embedding
         if self.no_atom_encoder:
@@ -109,7 +97,8 @@ class InputEmbedder(nn.Module):
             )
         else:
             a, _, _, _, _ = self.atom_attention_encoder(feats)
-        s = torch.cat([a, res_type, profile, deletion_mean, pocket_feature], dim=-1)
+        # embed size is: num_tokens*2 + 1 + 4=len(const.pocket_contact_info) + token_s
+        s: Float32[ "batch len embed=455"] = torch.cat([a, res_type, profile, deletion_mean, pocket_feature], dim=-1)
         return s
 
 
@@ -206,7 +195,7 @@ class MSAModule(nn.Module):
         self,
         z: Tensor,
         emb: Tensor,
-        feats: Dict[str, Tensor],
+        feats: dict[str, Tensor],
     ) -> Tensor:
         """Perform the forward pass.
 
@@ -216,7 +205,7 @@ class MSAModule(nn.Module):
             The pairwise embeddings
         emb : Tensor
             The input embeddings
-        feats : Dict[str, Tensor]
+        feats : dict[str, Tensor]
             Input features
 
         Returns
@@ -365,7 +354,7 @@ class MSALayer(nn.Module):
             The msa representation
         token_mask : Tensor
             The token mask
-        msa_mask : Dict[str, Tensor]
+        msa_mask : dict[str, Tensor]
             The MSA mask
 
         Returns

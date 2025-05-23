@@ -935,6 +935,7 @@ def process_msa_features(
     msa_mask = torch.ones_like(msa[:, :, 0])
     profile = msa.float().mean(dim=0)
     has_deletion = deletion > 0
+    # bind the deletion values to [0, pi/2]
     deletion = np.pi / 2 * np.arctan(deletion / 3)
     deletion_mean = deletion.mean(axis=0)
 

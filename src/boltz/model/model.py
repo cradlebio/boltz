@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 import torch
 import torch._dynamo
+from jaxtyping import Float, Float32
 from pytorch_lightning import LightningModule
 from torch import Tensor, nn
 from torchmetrics import MeanMetric
@@ -77,6 +78,17 @@ class Boltz1(LightningModule):
         max_dist: float = 22.0,
         predict_args: Optional[dict[str, Any]] = None,
     ) -> None:
+        """Initialize the Boltz1 model.
+        Params:
+            atom_s: the atom single embedding dimension.
+            atom_z: the atom pair embedding dimension.
+            token_s: the single token embedding dimension.
+            token_z: the pair embedding dimension.
+            atom_feature_dim: the atom feature dimension.
+            atoms_per_window_queries: the number of atoms per window for queries.
+            atoms_per_window_keys: the number of atoms per window for keys.
+            no_atom_encoder: whether to use the atom encoder
+        """
         super().__init__()
 
         self.save_hyperparameters()
@@ -273,15 +285,20 @@ class Boltz1(LightningModule):
         with torch.set_grad_enabled(
             self.training and self.structure_prediction_training
         ):
-            s_inputs = self.input_embedder(feats)
+            # embed size after input embedder is: (num_tokens*2 + 1 + 4=len(const.pocket_contact_info) + token_s=384) = 455
+            s_inputs: Float32[Tensor, "batch len embed=455"] = self.input_embedder(feats)
 
-            # Initialize the sequence and pairwise embeddings
-            s_init = self.s_init(s_inputs)
-            z_init = (
-                self.z_init_1(s_inputs)[:, :, None]
-                + self.z_init_2(s_inputs)[:, None, :]
+            # Initialize the sequence embeddings
+            s_init: Float[Tensor, "batch len token_s"] = self.s_init(s_inputs)
+
+            # Initialize the pairwise embeddings by projecting the sequence inputs twice and then
+            # turning it into a matrix using broadcasting
+            z_init: Float["batch len len token_z"] = (
+                self.z_init_1(s_inputs)[:, :, None] # batch len 1 z_input_dim
+                + self.z_init_2(s_inputs)[:, None, :] # batch 1 len z_input_dim
             )
-            relative_position_encoding = self.rel_pos(feats)
+
+            relative_position_encoding: Float32[Tensor, "batch len len token_z"] = self.rel_pos(feats)
             z_init = z_init + relative_position_encoding
             z_init = z_init + self.token_bonds(feats["token_bonds"].float())
 
@@ -290,8 +307,8 @@ class Boltz1(LightningModule):
             z = torch.zeros_like(z_init)
 
             # Compute pairwise mask
-            mask = feats["token_pad_mask"].float()
-            pair_mask = mask[:, :, None] * mask[:, None, :]
+            mask: Float32[Tensor, "batch len"] = feats["token_pad_mask"].float()
+            pair_mask: Float32[Tensor, "batch len len"] = mask[:, :, None] * mask[:, None, :]
 
             for i in range(recycling_steps + 1):
                 with torch.set_grad_enabled(self.training and (i == recycling_steps)):

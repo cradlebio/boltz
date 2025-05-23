@@ -110,7 +110,7 @@ class BoltzTokenizer(Tokenizer):
 
                     token_idx += 1
 
-                # Non-standard are tokenized per atom
+                # Non-standard amino acids are tokenized per atom
                 else:
                     # We use the unk protein token as res_type
                     unk_token = const.unk_token["PROTEIN"]
