@@ -1,8 +1,6 @@
-from typing import Dict, Tuple
-
-from fairscale.nn.checkpoint.checkpoint_activations import checkpoint_wrapper
 import torch
 from jaxtyping import Float, Int64, Float32
+from fairscale.nn.checkpoint.checkpoint_activations import checkpoint_wrapper
 from torch import Tensor, nn
 
 from boltz.data import const
@@ -71,14 +69,12 @@ class InputEmbedder(nn.Module):
                 structure_prediction=False,
             )
 
-    def forward(self, feats: dict[str, Tensor]) -> Float32[Tensor, " batch len embed=455"]:
-        """Perform the forward pass.
+    def forward(self, feats: dict[str, Tensor]) -> Tensor:
+        """Perform the forward pass.`
 
         Params:
-            feats : input features
-
-        Return:
-            the embedded tokens.
+            feats: input features
+        Return: the embedded tokens.
         """
         # Residue type is a one-hot encoding of the 33 token types (amino acids, nucleotides, etc.)
         res_type: Int64[Tensor, " batch len num_tokens=33"] = feats["res_type"]
@@ -287,7 +283,6 @@ class MSALayer(nn.Module):
 
         Parameters
         ----------
-
         msa_s : int
             The MSA embedding size.
         token_z : int
@@ -343,7 +338,7 @@ class MSALayer(nn.Module):
         chunk_size_transition_msa: int = None,
         chunk_size_outer_product: int = None,
         chunk_size_tri_attn: int = None,
-    ) -> Tuple[Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor]:
         """Perform the forward pass.
 
         Parameters
@@ -497,7 +492,7 @@ class PairformerModule(nn.Module):
         mask: Tensor,
         pair_mask: Tensor,
         chunk_size_tri_attn: int = None,
-    ) -> Tuple[Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor]:
         """Perform the forward pass.
 
         Parameters
@@ -510,6 +505,7 @@ class PairformerModule(nn.Module):
             The token mask
         pair_mask : Tensor
             The pairwise mask
+
         Returns
         -------
         Tensor
@@ -597,7 +593,7 @@ class PairformerLayer(nn.Module):
         mask: Tensor,
         pair_mask: Tensor,
         chunk_size_tri_attn: int = None,
-    ) -> Tuple[Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor]:
         """Perform the forward pass."""
         # Compute pairwise stack
         dropout = get_dropout_mask(self.dropout, z, self.training)
