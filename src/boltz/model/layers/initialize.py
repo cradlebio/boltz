@@ -16,31 +16,21 @@
 # limitations under the License.
 
 import math
+
 import numpy as np
-from scipy.stats import truncnorm
 import torch
+from scipy.stats import truncnorm
 
 
-def _prod(nums):
-    out = 1
-    for n in nums:
-        out = out * n
-    return out
-
-
-def _calculate_fan(linear_weight_shape, fan="fan_in"):
+def _calculate_fan(linear_weight_shape: torch.Size, fan: str = "fan_in") -> int:
     fan_out, fan_in = linear_weight_shape
-
     if fan == "fan_in":
-        f = fan_in
-    elif fan == "fan_out":
-        f = fan_out
-    elif fan == "fan_avg":
-        f = (fan_in + fan_out) / 2
-    else:
-        raise ValueError("Invalid fan option")
-
-    return f
+        return fan_in
+    if fan == "fan_out":
+        return fan_out
+    if fan == "fan_avg":
+        return (fan_in + fan_out) / 2
+    raise ValueError("Invalid fan option")
 
 
 def trunc_normal_init_(weights, scale=1.0, fan="fan_in"):
@@ -50,7 +40,7 @@ def trunc_normal_init_(weights, scale=1.0, fan="fan_in"):
     a = -2
     b = 2
     std = math.sqrt(scale) / truncnorm.std(a=a, b=b, loc=0, scale=1)
-    size = _prod(shape)
+    size = math.prod(shape)
     samples = truncnorm.rvs(a=a, b=b, loc=0, scale=std, size=size)
     samples = np.reshape(samples, shape)
     with torch.no_grad():

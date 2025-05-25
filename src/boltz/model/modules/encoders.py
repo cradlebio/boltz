@@ -4,8 +4,8 @@ from math import pi
 
 import torch
 from einops import rearrange
-from jaxtyping import Int64, Bool, Float32
-from torch import nn, Tensor
+from jaxtyping import Bool, Float32, Int64
+from torch import Tensor, nn
 from torch.nn import Module, ModuleList
 from torch.nn.functional import one_hot
 
@@ -28,7 +28,6 @@ class FourierEmbedding(Module):
             The dimension of the embeddings.
 
         """
-
         super().__init__()
         self.proj = nn.Linear(1, dim)
         torch.nn.init.normal_(self.proj.weight, mean=0, std=1)
@@ -36,8 +35,8 @@ class FourierEmbedding(Module):
         self.proj.requires_grad_(False)
 
     def forward(
-            self,
-            times,
+        self,
+        times,
     ):
         times = rearrange(times, "b -> b 1")
         rand_proj = self.proj(times)
@@ -67,11 +66,13 @@ class RelativePositionEncoder(Module):
         # True if two tokens are in the same chain, False otherwise
         b_same_chain: Bool[Tensor, "batch len len"] = torch.eq(
             feats["asym_id"][:, :, None],
-            feats["asym_id"][:, None, :], )
+            feats["asym_id"][:, None, :],
+        )
         # True if two tokens are in the same position within their chains, False otherwise
         b_same_residue: Bool[Tensor, "batch len len"] = torch.eq(
             feats["residue_index"][:, :, None],
-            feats["residue_index"][:, None, :], )
+            feats["residue_index"][:, None, :],
+        )
         # True if two tokens are in the same entity, false otherwise
         # For example, in an antibody, the two light chains are in the same entity, same for the 2 heavy chains
         # For a bi-specific antibody with identical light chains, the two light chains will have the same entity id,
@@ -82,7 +83,7 @@ class RelativePositionEncoder(Module):
         )
         # relative position of tokens within a chain
         rel_pos: Int64[Tensor, "batch len len"] = (
-                feats["residue_index"][:, :, None] - feats["residue_index"][:, None, :]
+            feats["residue_index"][:, :, None] - feats["residue_index"][:, None, :]
         )
         if torch.any(feats["cyclic_period"] != 0):
             # set atoms that are part of a cyclic structure to 10_000, the rest are untouched
@@ -100,17 +101,13 @@ class RelativePositionEncoder(Module):
         d_residue: Int64[Tensor, "batch len len"] = torch.clip(rel_pos + self.r_max, 0, 2 * self.r_max)
 
         # set the distance to 2 * r_max + 1 if the two tokens are not in the same chain
-        d_residue = torch.where(
-            b_same_chain, d_residue, torch.zeros_like(d_residue) + 2 * self.r_max + 1
-        )
+        d_residue = torch.where(b_same_chain, d_residue, torch.zeros_like(d_residue) + 2 * self.r_max + 1)
         # one hot encoding of the relative position
         a_rel_pos: Int64[Tensor, "batch len len embed=66"] = one_hot(d_residue, 2 * self.r_max + 2)
 
         # relative position of tokens within a chain, clipped to r_max
         d_token: Int64[Tensor, "batch len len"] = torch.clip(
-            feats["token_index"][:, :, None]
-            - feats["token_index"][:, None, :]
-            + self.r_max,
+            feats["token_index"][:, :, None] - feats["token_index"][:, None, :] + self.r_max,
             0,
             2 * self.r_max,
         )
@@ -131,12 +128,10 @@ class RelativePositionEncoder(Module):
             2 * self.s_max,
         )
         # set to 2 * s_max + 1 = 5 if the two tokens are in the same chain, otherwise to the relative chain distance
-        d_chain = torch.where(
-            b_same_chain, torch.zeros_like(d_chain) + 2 * self.s_max + 1, d_chain
-        )
+        d_chain = torch.where(b_same_chain, torch.zeros_like(d_chain) + 2 * self.s_max + 1, d_chain)
         a_rel_chain: Int64[Tensor, "batch len len embed=66"] = one_hot(d_chain, 2 * self.s_max + 2)
 
-        p: Float32[Tensor, "batch, len, len, token_z"] = self.linear_layer(
+        p: Float32[Tensor, " batch, len, len, token_z"] = self.linear_layer(
             torch.cat(
                 [
                     a_rel_pos.float(),
@@ -145,7 +140,7 @@ class RelativePositionEncoder(Module):
                     a_rel_chain.float(),
                 ],
                 dim=-1,
-            ) # (batch, len, len, 4 * (r_max + 1) + 2 * (s_max + 1) + 1))
+            )  # (batch, len, len, 4 * (r_max + 1) + 2 * (s_max + 1) + 1))
         )
         return p
 
@@ -154,13 +149,13 @@ class SingleConditioning(Module):
     """Single conditioning layer."""
 
     def __init__(
-            self,
-            sigma_data: float,
-            token_s=384,
-            dim_fourier=256,
-            num_transitions=2,
-            transition_expansion_factor=2,
-            eps=1e-20,
+        self,
+        sigma_data: float,
+        token_s=384,
+        dim_fourier=256,
+        num_transitions=2,
+        transition_expansion_factor=2,
+        eps=1e-20,
     ):
         """Initialize the single conditioning layer.
 
@@ -184,9 +179,7 @@ class SingleConditioning(Module):
         self.eps = eps
         self.sigma_data = sigma_data
 
-        input_dim = (
-                2 * token_s + 2 * const.num_tokens + 1 + len(const.pocket_contact_info)
-        )
+        input_dim = 2 * token_s + 2 * const.num_tokens + 1 + len(const.pocket_contact_info)
         self.norm_single = nn.LayerNorm(input_dim)
         self.single_embed = nn.Linear(input_dim, 2 * token_s)
         self.fourier_embed = FourierEmbedding(dim_fourier)
@@ -195,19 +188,17 @@ class SingleConditioning(Module):
 
         transitions = ModuleList([])
         for _ in range(num_transitions):
-            transition = Transition(
-                dim=2 * token_s, hidden=transition_expansion_factor * 2 * token_s
-            )
+            transition = Transition(dim=2 * token_s, hidden=transition_expansion_factor * 2 * token_s)
             transitions.append(transition)
 
         self.transitions = transitions
 
     def forward(
-            self,
-            *,
-            times,
-            s_trunk,
-            s_inputs,
+        self,
+        *,
+        times,
+        s_trunk,
+        s_inputs,
     ):
         s = torch.cat((s_trunk, s_inputs), dim=-1)
         s = self.single_embed(self.norm_single(s))
@@ -227,11 +218,11 @@ class PairwiseConditioning(Module):
     """Pairwise conditioning layer."""
 
     def __init__(
-            self,
-            token_z,
-            dim_token_rel_pos_feats,
-            num_transitions=2,
-            transition_expansion_factor=2,
+        self,
+        token_z,
+        dim_token_rel_pos_feats,
+        num_transitions=2,
+        transition_expansion_factor=2,
     ):
         """Initialize the pairwise conditioning layer.
 
@@ -256,17 +247,15 @@ class PairwiseConditioning(Module):
 
         transitions = ModuleList([])
         for _ in range(num_transitions):
-            transition = Transition(
-                dim=token_z, hidden=transition_expansion_factor * token_z
-            )
+            transition = Transition(dim=token_z, hidden=transition_expansion_factor * token_z)
             transitions.append(transition)
 
         self.transitions = transitions
 
     def forward(
-            self,
-            z_trunk,
-            token_rel_pos_feats,
+        self,
+        z_trunk,
+        token_rel_pos_feats,
     ):
         z = torch.cat((z_trunk, token_rel_pos_feats), dim=-1)
         z = self.dim_pairwise_init_proj(z)
@@ -277,74 +266,58 @@ class PairwiseConditioning(Module):
         return z
 
 
-def get_indexing_matrix(K, W, H, device):
-    assert W % 2 == 0
-    assert H % (W // 2) == 0
+def get_indexing_matrix(k: int, w: int, h: int, device) -> Float32[Tensor, "2*k h*k"]:
+    assert w % 2 == 0
+    assert h % (w // 2) == 0
 
-    h = H // (W // 2)
+    h = h // (w // 2)
     assert h % 2 == 0
 
-    arange = torch.arange(2 * K, device=device)
-    index = ((arange.unsqueeze(0) - arange.unsqueeze(1)) + h // 2).clamp(
-        min=0, max=h + 1
-    )
-    index = index.view(K, 2, 2 * K)[:, 0, :]
+    arange = torch.arange(2 * k, device=device)
+    index = ((arange.unsqueeze(0) - arange.unsqueeze(1)) + h // 2).clamp(min=0, max=h + 1)
+    index = index.view(k, 2, 2 * k)[:, 0, :]
     onehot = one_hot(index, num_classes=h + 2)[..., 1:-1].transpose(1, 0)
-    return onehot.reshape(2 * K, h * K).float()
+    return onehot.reshape(2 * k, h * k).float()
 
 
-def single_to_keys(single, indexing_matrix, W, H):
-    B, N, D = single.shape
-    K = N // W
-    single = single.view(B, 2 * K, W // 2, D)
-    return torch.einsum("b j i d, j k -> b k i d", single, indexing_matrix).reshape(
-        B, K, H, D
-    )
+def single_to_keys(single, indexing_matrix, w, h):
+    b, n, d = single.shape
+    k = n // w
+    single = single.view(b, 2 * k, w // 2, d)
+    return torch.einsum("b j i d, j k -> b k i d", single, indexing_matrix).reshape(b, k, h, d)
 
 
 class AtomAttentionEncoder(Module):
     """Atom attention encoder."""
 
     def __init__(
-            self,
-            atom_s,
-            atom_z,
-            token_s,
-            token_z,
-            atoms_per_window_queries,
-            atoms_per_window_keys,
-            atom_feature_dim,
-            atom_encoder_depth=3,
-            atom_encoder_heads=4,
-            structure_prediction=True,
-            activation_checkpointing=False,
+        self,
+        atom_s,
+        atom_z,
+        token_s,
+        token_z,
+        atoms_per_window_queries,
+        atoms_per_window_keys,
+        atom_feature_dim,
+        atom_encoder_depth=3,
+        atom_encoder_heads=4,
+        structure_prediction=True,
+        activation_checkpointing=False,
     ):
         """Initialize the atom attention encoder.
 
-        Parameters
-        ----------
-        atom_s : int
-            The atom single representation dimension.
-        atom_z : int
-            The atom pair representation dimension.
-        token_s : int
-            The single representation dimension.
-        token_z : int
-            The pair representation dimension.
-        atoms_per_window_queries : int
-            The number of atoms per window for queries.
-        atoms_per_window_keys : int
-            The number of atoms per window for keys.
-        atom_feature_dim : int
-            The atom feature dimension.
-        atom_encoder_depth : int, optional
-            The number of transformer layers, by default 3.
-        atom_encoder_heads : int, optional
-            The number of transformer heads, by default 4.
-        structure_prediction : bool, optional
-            Whether it is used in the diffusion module, by default True.
-        activation_checkpointing : bool, optional
-            Whether to use activation checkpointing, by default False.
+        Args:
+            atom_s: the atom single representation embedding size.
+            atom_z: the atom pair representation embedding size.
+            token_s: the single token representation embedding size.
+            token_z: the pair token representation embedding size.
+            atoms_per_window_queries: the number of atoms per window for queries.
+            atoms_per_window_keys: the number of atoms per window for keys.
+            atom_feature_dim: the atom feature dimension.
+            atom_encoder_depth: the atom encoder depth.
+            atom_encoder_heads: number of attention heads in the atom encoder.
+            structure_prediction: whether it is used in the diffusion module
+            activation_checkpointing: whether to use activation checkpointing
 
         """
         super().__init__()
@@ -358,14 +331,10 @@ class AtomAttentionEncoder(Module):
 
         self.structure_prediction = structure_prediction
         if structure_prediction:
-            self.s_to_c_trans = nn.Sequential(
-                nn.LayerNorm(token_s), LinearNoBias(token_s, atom_s)
-            )
+            self.s_to_c_trans = nn.Sequential(nn.LayerNorm(token_s), LinearNoBias(token_s, atom_s))
             init.final_init_(self.s_to_c_trans[1].weight)
 
-            self.z_to_p_trans = nn.Sequential(
-                nn.LayerNorm(token_z), LinearNoBias(token_z, atom_z)
-            )
+            self.z_to_p_trans = nn.Sequential(nn.LayerNorm(token_z), LinearNoBias(token_z, atom_z))
             init.final_init_(self.z_to_p_trans[1].weight)
 
             self.r_to_q_trans = LinearNoBias(10, atom_s)
@@ -410,15 +379,15 @@ class AtomAttentionEncoder(Module):
         )
 
     def forward(
-            self,
-            feats,
-            s_trunk=None,
-            z=None,
-            r=None,
-            multiplicity=1,
-            model_cache=None,
+        self,
+        feats,
+        s_trunk=None,
+        z=None,
+        r=None,
+        multiplicity=1,
+        model_cache=None,
     ):
-        B, N, _ = feats["ref_pos"].shape
+        b, n, _ = feats["ref_pos"].shape
         atom_mask = feats["atom_pad_mask"].bool()
 
         layer_cache = None
@@ -439,7 +408,7 @@ class AtomAttentionEncoder(Module):
                     feats["ref_charge"].unsqueeze(-1),
                     feats["atom_pad_mask"].unsqueeze(-1),
                     feats["ref_element"],
-                    feats["ref_atom_name_chars"].reshape(B, N, 4 * 64),
+                    feats["ref_atom_name_chars"].reshape(b, n, 4 * 64),
                 ],
                 dim=-1,
             )
@@ -448,37 +417,23 @@ class AtomAttentionEncoder(Module):
 
             # NOTE: we are already creating the windows to make it more efficient
             W, H = self.atoms_per_window_queries, self.atoms_per_window_keys
-            B, N = c.shape[:2]
-            K = N // W
+            b, n = c.shape[:2]
+            K = n // W
             keys_indexing_matrix = get_indexing_matrix(K, W, H, c.device)
-            to_keys = partial(
-                single_to_keys, indexing_matrix=keys_indexing_matrix, W=W, H=H
-            )
+            to_keys = partial(single_to_keys, indexing_matrix=keys_indexing_matrix, W=W, H=H)
 
-            atom_ref_pos_queries = atom_ref_pos.view(B, K, W, 1, 3)
-            atom_ref_pos_keys = to_keys(atom_ref_pos).view(B, K, 1, H, 3)
+            atom_ref_pos_queries = atom_ref_pos.view(b, K, W, 1, 3)
+            atom_ref_pos_keys = to_keys(atom_ref_pos).view(b, K, 1, H, 3)
 
             d = atom_ref_pos_keys - atom_ref_pos_queries
             d_norm = torch.sum(d * d, dim=-1, keepdim=True)
             d_norm = 1 / (1 + d_norm)
 
-            atom_mask_queries = atom_mask.view(B, K, W, 1)
-            atom_mask_keys = (
-                to_keys(atom_mask.unsqueeze(-1).float()).view(B, K, 1, H).bool()
-            )
-            atom_uid_queries = atom_uid.view(B, K, W, 1)
-            atom_uid_keys = (
-                to_keys(atom_uid.unsqueeze(-1).float()).view(B, K, 1, H).long()
-            )
-            v = (
-                (
-                        atom_mask_queries
-                        & atom_mask_keys
-                        & (atom_uid_queries == atom_uid_keys)
-                )
-                .float()
-                .unsqueeze(-1)
-            )
+            atom_mask_queries = atom_mask.view(b, K, W, 1)
+            atom_mask_keys = to_keys(atom_mask.unsqueeze(-1).float()).view(b, K, 1, H).bool()
+            atom_uid_queries = atom_uid.view(b, K, W, 1)
+            atom_uid_keys = to_keys(atom_uid.unsqueeze(-1).float()).view(b, K, 1, H).long()
+            v = (atom_mask_queries & atom_mask_keys & (atom_uid_queries == atom_uid_keys)).float().unsqueeze(-1)
 
             p = self.embed_atompair_ref_pos(d) * v
             p = p + self.embed_atompair_ref_dist(d_norm) * v
@@ -494,9 +449,7 @@ class AtomAttentionEncoder(Module):
                 s_to_c = torch.bmm(atom_to_token, s_to_c)
                 c = c + s_to_c
 
-                atom_to_token_queries = atom_to_token.view(
-                    B, K, W, atom_to_token.shape[-1]
-                )
+                atom_to_token_queries = atom_to_token.view(b, K, W, atom_to_token.shape[-1])
                 atom_to_token_keys = to_keys(atom_to_token)
                 z_to_p = self.z_to_p_trans(z)
                 z_to_p = torch.einsum(
@@ -507,8 +460,8 @@ class AtomAttentionEncoder(Module):
                 )
                 p = p + z_to_p
 
-            p = p + self.c_to_p_trans_q(c.view(B, K, W, 1, c.shape[-1]))
-            p = p + self.c_to_p_trans_k(to_keys(c).view(B, K, 1, H, c.shape[-1]))
+            p = p + self.c_to_p_trans_q(c.view(b, K, W, 1, c.shape[-1]))
+            p = p + self.c_to_p_trans_k(to_keys(c).view(b, K, 1, H, c.shape[-1]))
             p = p + self.p_mlp(p)
 
             if model_cache is not None:
@@ -527,7 +480,7 @@ class AtomAttentionEncoder(Module):
             # only here the multiplicity kicks in because we use the different positions r
             q = q.repeat_interleave(multiplicity, 0)
             r_input = torch.cat(
-                [r, torch.zeros((B * multiplicity, N, 7)).to(r)],
+                [r, torch.zeros((b * multiplicity, n, 7)).to(r)],
                 dim=-1,
             )
             r_to_q = self.r_to_q_trans(r_input)
@@ -549,9 +502,7 @@ class AtomAttentionEncoder(Module):
         q_to_a = self.atom_to_token_trans(q)
         atom_to_token = feats["atom_to_token"].float()
         atom_to_token = atom_to_token.repeat_interleave(multiplicity, 0)
-        atom_to_token_mean = atom_to_token / (
-                atom_to_token.sum(dim=1, keepdim=True) + 1e-6
-        )
+        atom_to_token_mean = atom_to_token / (atom_to_token.sum(dim=1, keepdim=True) + 1e-6)
         a = torch.bmm(atom_to_token_mean.transpose(1, 2), q_to_a)
 
         return a, q, c, p, to_keys
@@ -561,15 +512,15 @@ class AtomAttentionDecoder(Module):
     """Atom attention decoder."""
 
     def __init__(
-            self,
-            atom_s,
-            atom_z,
-            token_s,
-            attn_window_queries,
-            attn_window_keys,
-            atom_decoder_depth=3,
-            atom_decoder_heads=4,
-            activation_checkpointing=False,
+        self,
+        atom_s,
+        atom_z,
+        token_s,
+        attn_window_queries,
+        attn_window_keys,
+        atom_decoder_depth=3,
+        atom_decoder_heads=4,
+        activation_checkpointing=False,
     ):
         """Initialize the atom attention decoder.
 
@@ -609,21 +560,19 @@ class AtomAttentionDecoder(Module):
             activation_checkpointing=activation_checkpointing,
         )
 
-        self.atom_feat_to_atom_pos_update = nn.Sequential(
-            nn.LayerNorm(atom_s), LinearNoBias(atom_s, 3)
-        )
+        self.atom_feat_to_atom_pos_update = nn.Sequential(nn.LayerNorm(atom_s), LinearNoBias(atom_s, 3))
         init.final_init_(self.atom_feat_to_atom_pos_update[1].weight)
 
     def forward(
-            self,
-            a,
-            q,
-            c,
-            p,
-            feats,
-            to_keys,
-            multiplicity=1,
-            model_cache=None,
+        self,
+        a,
+        q,
+        c,
+        p,
+        feats,
+        to_keys,
+        multiplicity=1,
+        model_cache=None,
     ):
         atom_mask = feats["atom_pad_mask"]
         atom_mask = atom_mask.repeat_interleave(multiplicity, 0)

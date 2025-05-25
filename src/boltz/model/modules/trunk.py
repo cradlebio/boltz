@@ -1,6 +1,8 @@
+from typing import Any, Optional
+
 import torch
-from jaxtyping import Float, Int64, Float32
 from fairscale.nn.checkpoint.checkpoint_activations import checkpoint_wrapper
+from jaxtyping import Float32, Int64
 from torch import Tensor, nn
 
 from boltz.data import const
@@ -38,7 +40,7 @@ class InputEmbedder(nn.Module):
     ) -> None:
         """Initialize the input embedder.
 
-        Params:
+        Args:
             atom_s: the atom single representation embedding size.
             atom_z: the atom pair representation embedding size.
             token_s: the single token representation embedding size.
@@ -72,17 +74,20 @@ class InputEmbedder(nn.Module):
     def forward(self, feats: dict[str, Tensor]) -> Tensor:
         """Perform the forward pass.`
 
-        Params:
-            feats: input features
+        Args:
+            feats: dictionary of input feature name to input feature tensor. The following features are being
+                processed:
+                 - `res_type`: the residue type, a one-hot encoding of the 33 token types (amino acids, nucleotides, etc.)
+                 - `profile`: the amino acid frequency in the MSA
+                 - `deletion_mean`: the average number of deletions per position in the MSA (see featurizer.py for details)
+                 - `pocket_feature`: the pocket feature, a one-hot encoding of the 4 pocket types (see const.py::pocket_contact_info)
+                 - if `self.no_atom_encoder` is False, the atom features are also processed by self.atom_attention_encoder.
+
         Return: the embedded tokens.
         """
-        # Residue type is a one-hot encoding of the 33 token types (amino acids, nucleotides, etc.)
         res_type: Int64[Tensor, " batch len num_tokens=33"] = feats["res_type"]
-        # amino acid frequency in the MSA
         profile: Float32[Tensor, " batch len num_tokens=33"] = feats["profile"]
-        # Average number of deletions per position in the MSA (see featurizer.py for details)
         deletion_mean: Float32[Tensor, " batch len 1"] = feats["deletion_mean"].unsqueeze(-1)
-        # Pocket feature is a one-hot encoding of the 4 pocket types (see const.py::pocket_contact_info)
         pocket_feature: Int64[Tensor, " batch len 4"] = feats["pocket_feature"]
 
         # Compute input embedding
@@ -94,7 +99,7 @@ class InputEmbedder(nn.Module):
         else:
             a, _, _, _, _ = self.atom_attention_encoder(feats)
         # embed size is: num_tokens*2 + 1 + 4=len(const.pocket_contact_info) + token_s
-        s: Float32[ "batch len embed=455"] = torch.cat([a, res_type, profile, deletion_mean, pocket_feature], dim=-1)
+        s: Float32["batch len embed=455"] = torch.cat([a, res_type, profile, deletion_mean, pocket_feature], dim=-1)
         return s
 
 
@@ -115,7 +120,7 @@ class MSAModule(nn.Module):
         use_paired_feature: bool = False,
         offload_to_cpu: bool = False,
         use_trifast: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Initialize the MSA module.
 
@@ -146,6 +151,7 @@ class MSAModule(nn.Module):
 
         """
         super().__init__()
+        del kwargs
         self.msa_blocks = msa_blocks
         self.msa_dropout = msa_dropout
         self.z_dropout = z_dropout
@@ -158,7 +164,7 @@ class MSAModule(nn.Module):
             bias=False,
         )
         self.layers = nn.ModuleList()
-        for i in range(msa_blocks):
+        for _ in range(msa_blocks):
             if activation_checkpointing:
                 self.layers.append(
                     checkpoint_wrapper(
@@ -204,7 +210,7 @@ class MSAModule(nn.Module):
         feats : dict[str, Tensor]
             Input features
 
-        Returns
+        Returns:
         -------
         Tensor
             The output pairwise embeddings.
@@ -277,7 +283,7 @@ class MSALayer(nn.Module):
         z_dropout: float,
         pairwise_head_width: int = 32,
         pairwise_num_heads: int = 4,
-        use_trifast: bool=False,
+        use_trifast: bool = False,
     ) -> None:
         """Initialize the MSA module.
 
@@ -311,12 +317,8 @@ class MSALayer(nn.Module):
 
         self.tri_mul_out = TriangleMultiplicationOutgoing(token_z)
         self.tri_mul_in = TriangleMultiplicationIncoming(token_z)
-        self.tri_att_start = TriangleAttentionStartingNode(
-            token_z, pairwise_head_width, pairwise_num_heads, inf=1e9
-        )
-        self.tri_att_end = TriangleAttentionEndingNode(
-            token_z, pairwise_head_width, pairwise_num_heads, inf=1e9
-        )
+        self.tri_att_start = TriangleAttentionStartingNode(token_z, pairwise_head_width, pairwise_num_heads, inf=1e9)
+        self.tri_att_end = TriangleAttentionEndingNode(token_z, pairwise_head_width, pairwise_num_heads, inf=1e9)
         self.z_transition = Transition(
             dim=token_z,
             hidden=token_z * 4,
@@ -334,10 +336,10 @@ class MSALayer(nn.Module):
         token_mask: Tensor,
         msa_mask: Tensor,
         chunk_heads_pwa: bool = False,
-        chunk_size_transition_z: int = None,
-        chunk_size_transition_msa: int = None,
-        chunk_size_outer_product: int = None,
-        chunk_size_tri_attn: int = None,
+        chunk_size_transition_z: Optional[int] = None,
+        chunk_size_transition_msa: Optional[int] = None,
+        chunk_size_outer_product: Optional[int] = None,
+        chunk_size_tri_attn: Optional[int] = None,
     ) -> tuple[Tensor, Tensor]:
         """Perform the forward pass.
 
@@ -352,7 +354,7 @@ class MSALayer(nn.Module):
         msa_mask : dict[str, Tensor]
             The MSA mask
 
-        Returns
+        Returns:
         -------
         Tensor
             The output pairwise embeddings.
@@ -362,9 +364,7 @@ class MSALayer(nn.Module):
         """
         # Communication to MSA stack
         msa_dropout = get_dropout_mask(self.msa_dropout, m, self.training)
-        m = m + msa_dropout * self.pair_weighted_averaging(
-            m, z, token_mask, chunk_heads_pwa
-        )
+        m = m + msa_dropout * self.pair_weighted_averaging(m, z, token_mask, chunk_heads_pwa)
         m = m + self.msa_transition(m, chunk_size_transition_msa)
 
         # Communication to pairwise stack
@@ -415,7 +415,7 @@ class PairformerModule(nn.Module):
         no_update_z: bool = False,
         offload_to_cpu: bool = False,
         use_trifast: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Initialize the Pairformer module.
 
@@ -446,6 +446,7 @@ class PairformerModule(nn.Module):
 
         """
         super().__init__()
+        del kwargs
         self.token_z = token_z
         self.num_blocks = num_blocks
         self.dropout = dropout
@@ -491,7 +492,7 @@ class PairformerModule(nn.Module):
         z: Tensor,
         mask: Tensor,
         pair_mask: Tensor,
-        chunk_size_tri_attn: int = None,
+        chunk_size_tri_attn: Optional[int] = None,
     ) -> tuple[Tensor, Tensor]:
         """Perform the forward pass.
 
@@ -506,7 +507,7 @@ class PairformerModule(nn.Module):
         pair_mask : Tensor
             The pairwise mask
 
-        Returns
+        Returns:
         -------
         Tensor
             The updated sequence embeddings.
@@ -574,12 +575,8 @@ class PairformerLayer(nn.Module):
             self.attention = AttentionPairBias(token_s, token_z, num_heads)
         self.tri_mul_out = TriangleMultiplicationOutgoing(token_z)
         self.tri_mul_in = TriangleMultiplicationIncoming(token_z)
-        self.tri_att_start = TriangleAttentionStartingNode(
-            token_z, pairwise_head_width, pairwise_num_heads, inf=1e9
-        )
-        self.tri_att_end = TriangleAttentionEndingNode(
-            token_z, pairwise_head_width, pairwise_num_heads, inf=1e9
-        )
+        self.tri_att_start = TriangleAttentionStartingNode(token_z, pairwise_head_width, pairwise_num_heads, inf=1e9)
+        self.tri_att_end = TriangleAttentionEndingNode(token_z, pairwise_head_width, pairwise_num_heads, inf=1e9)
         if not self.no_update_s:
             self.transition_s = Transition(token_s, token_s * 4)
         self.transition_z = Transition(token_z, token_z * 4)
@@ -592,7 +589,7 @@ class PairformerLayer(nn.Module):
         z: Tensor,
         mask: Tensor,
         pair_mask: Tensor,
-        chunk_size_tri_attn: int = None,
+        chunk_size_tri_attn: Optional[int] = None,
     ) -> tuple[Tensor, Tensor]:
         """Perform the forward pass."""
         # Compute pairwise stack
@@ -653,7 +650,7 @@ class DistogramModule(nn.Module):
         z : Tensor
             The pairwise embeddings
 
-        Returns
+        Returns:
         -------
         Tensor
             The predicted distogram.
