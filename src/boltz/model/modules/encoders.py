@@ -266,23 +266,49 @@ class PairwiseConditioning(Module):
         return z
 
 
-def get_indexing_matrix(k: int, w: int, h: int, device) -> Float32[Tensor, "2*k h*k"]:
+def get_indexing_matrix(k: int, w: int, h: int, device: torch.device) -> Float32[Tensor, "2*k num_key_windows*k"]:
+    """Get the indexing matrix for the keys in the attention mechanism.
+
+    Args:
+        k: the number of windows.
+        w: the number of atoms per window for queries.
+        h: the number of atoms per window for keys.
+        device: the device to create the tensor on.
+    """
     assert w % 2 == 0
     assert h % (w // 2) == 0
 
-    h = h // (w // 2)
-    assert h % 2 == 0
+    num_key_windows = h // (w // 2)
+    assert num_key_windows % 2 == 0
 
-    arange = torch.arange(2 * k, device=device)
-    index = ((arange.unsqueeze(0) - arange.unsqueeze(1)) + h // 2).clamp(min=0, max=h + 1)
-    index = index.view(k, 2, 2 * k)[:, 0, :]
-    onehot = one_hot(index, num_classes=h + 2)[..., 1:-1].transpose(1, 0)
-    return onehot.reshape(2 * k, h * k).float()
+    arange: Int64[Tensor, " 2*k"] = torch.arange(2 * k, device=device)
+    index: Int64[Tensor, "2*k 2*k"] = ((arange.unsqueeze(0) - arange.unsqueeze(1)) + num_key_windows // 2).clamp(
+        min=0, max=num_key_windows + 1
+    )
+    index: Int64[Tensor, "k 2*k"] = index.view(k, 2, 2 * k)[:, 0, :]
+    onehot: Int64[Tensor, "2*k k num_key_windows"] = one_hot(index, num_classes=num_key_windows + 2)[
+        ..., 1:-1
+    ].transpose(1, 0)
+    return onehot.reshape(2 * k, num_key_windows * k).float()
 
 
-def single_to_keys(single, indexing_matrix, w, h):
-    b, n, d = single.shape
+def single_to_keys(
+    single: Float32[Tensor, "batch num_atoms atom_s"],
+    indexing_matrix: Float32[Tensor, "2*k num_key_cols"],
+    w: int,
+    h: int,
+) -> Float32[Tensor, "batch k h atom_s"]:
+    """Convert single representation into a key tensor format for attention.
+
+    Args:
+        single: the single representation tensor of shape (batch, num_atoms, atom_s).
+        indexing_matrix: the indexing matrix for the keys.
+        w: the number of atoms per window for queries.
+        h: the number of atoms per window for keys.
+    """
+    b, n, d = single.shape  # b=batch, n=num_atoms, d=atom_s (embedding size)
     k = n // w
+    # break down the initial single representation (of size n) into 2*k blocks of length w/2
     single = single.view(b, 2 * k, w // 2, d)
     return torch.einsum("b j i d, j k -> b k i d", single, indexing_matrix).reshape(b, k, h, d)
 
@@ -313,10 +339,10 @@ class AtomAttentionEncoder(Module):
             token_z: the pair token representation embedding size.
             atoms_per_window_queries: the number of atoms per window for queries.
             atoms_per_window_keys: the number of atoms per window for keys.
-            atom_feature_dim: the atom feature dimension.
+            atom_feature_dim: the atom feature dimension (389 in the full model).
             atom_encoder_depth: the atom encoder depth.
             atom_encoder_heads: number of attention heads in the atom encoder.
-            structure_prediction: whether it is used in the diffusion module
+            structure_prediction: true when used in the DiffusionModule, false when used in the trunk
             activation_checkpointing: whether to use activation checkpointing
 
         """
@@ -387,8 +413,23 @@ class AtomAttentionEncoder(Module):
         multiplicity=1,
         model_cache=None,
     ):
-        b, n, _ = feats["ref_pos"].shape
-        atom_mask = feats["atom_pad_mask"].bool()
+        """Forward pass of the atom attention encoder.
+
+        Args:
+            feats: dictionary of input feature name to input feature tensor. The following features are being
+                processed:
+                - ref_pos: the reference position of the atoms, shape (batch, num_atoms, 3)
+                - atom_pad_mask: the atom padding mask, shape (batch, num_atoms)
+                - atom_uid: the atom unique identifier, shape (batch, num_atoms)
+            s_trunk: the single trunk representation, shape (batch, num_tokens, token_s)
+            z: the pair trunk representation, shape (batch, num_tokens, num_tokens, token_z)
+            r: the relative positions of the atoms, shape (batch, num_atoms, 7)
+            multiplicity: number of independent diffusion samples to run in parallel
+            model_cache: a cache for the model to speed up the computation,
+                it is a dictionary that contains pre-computed tensors
+        """
+        batch, n, _ = feats["ref_pos"].shape
+        atom_mask: Bool[Tensor, "batch num_atoms"] = feats["atom_pad_mask"].bool()
 
         layer_cache = None
         if model_cache is not None:
@@ -400,59 +441,72 @@ class AtomAttentionEncoder(Module):
         if model_cache is None or len(layer_cache) == 0:
             # either model is not using the cache or it is the first time running it
 
-            atom_ref_pos = feats["ref_pos"]
-            atom_uid = feats["ref_space_uid"]
-            atom_feats = torch.cat(
+            atom_ref_pos: Float32[Tensor, "batch num_atoms 3"] = feats["ref_pos"]
+            atom_uid: Int64[Tensor, "batch num_atoms"] = feats["ref_space_uid"]
+            # embed dim size is 389=3+1+1+128+256
+            atom_feats: Float32[Tensor, "batch num_atoms embed_dim=389"] = torch.cat(
                 [
                     atom_ref_pos,
                     feats["ref_charge"].unsqueeze(-1),
                     feats["atom_pad_mask"].unsqueeze(-1),
                     feats["ref_element"],
-                    feats["ref_atom_name_chars"].reshape(b, n, 4 * 64),
+                    feats["ref_atom_name_chars"].reshape(batch, n, 4 * 64),
                 ],
                 dim=-1,
             )
 
-            c = self.embed_atom_features(atom_feats)
+            c: Float32[Tensor, "batch num_atoms atom_s"] = self.embed_atom_features(atom_feats)
 
             # NOTE: we are already creating the windows to make it more efficient
-            W, H = self.atoms_per_window_queries, self.atoms_per_window_keys
-            b, n = c.shape[:2]
-            K = n // W
-            keys_indexing_matrix = get_indexing_matrix(K, W, H, c.device)
-            to_keys = partial(single_to_keys, indexing_matrix=keys_indexing_matrix, W=W, H=H)
+            w, h = self.atoms_per_window_queries, self.atoms_per_window_keys
+            k = n // w
+            keys_indexing_matrix: Float32[Tensor, "2*k num_key_cols"] = get_indexing_matrix(k, w, h, c.device)
+            to_keys = partial(single_to_keys, indexing_matrix=keys_indexing_matrix, w=w, h=h)
 
-            atom_ref_pos_queries = atom_ref_pos.view(b, K, W, 1, 3)
-            atom_ref_pos_keys = to_keys(atom_ref_pos).view(b, K, 1, H, 3)
+            atom_ref_pos_queries: Float32[Tensor, "batch k w 1 3"] = atom_ref_pos.view(batch, k, w, 1, 3)
+            atom_ref_pos_keys: Float32[Tensor, "batch k 1 h 3"] = to_keys(atom_ref_pos).view(batch, k, 1, h, 3)
 
-            d = atom_ref_pos_keys - atom_ref_pos_queries
-            d_norm = torch.sum(d * d, dim=-1, keepdim=True)
+            d: Float32[Tensor, "batch k w h 3"] = atom_ref_pos_keys - atom_ref_pos_queries
+            d_norm: Float32[Tensor, "batch k w h 1"] = torch.sum(d * d, dim=-1, keepdim=True)
             d_norm = 1 / (1 + d_norm)
 
-            atom_mask_queries = atom_mask.view(b, K, W, 1)
-            atom_mask_keys = to_keys(atom_mask.unsqueeze(-1).float()).view(b, K, 1, H).bool()
-            atom_uid_queries = atom_uid.view(b, K, W, 1)
-            atom_uid_keys = to_keys(atom_uid.unsqueeze(-1).float()).view(b, K, 1, H).long()
-            v = (atom_mask_queries & atom_mask_keys & (atom_uid_queries == atom_uid_keys)).float().unsqueeze(-1)
+            atom_mask_queries: Bool[Tensor, "batch k w 1"] = atom_mask.view(batch, k, w, 1)
+            atom_mask_keys: Bool[Tensor, "batch k 1 h"] = (
+                to_keys(atom_mask.unsqueeze(-1).float()).view(batch, k, 1, h).bool()
+            )
+            atom_uid_queries: Int64[Tensor, "batch k w 1"] = atom_uid.view(batch, k, w, 1)
+            atom_uid_keys: Int64[Tensor, "batch k 1 h"] = (
+                to_keys(atom_uid.unsqueeze(-1).float()).view(batch, k, 1, h).long()
+            )
+            v: Float32[Tensor, "batch k w h 1"] = (
+                (atom_mask_queries & atom_mask_keys & (atom_uid_queries == atom_uid_keys)).float().unsqueeze(-1)
+            )
 
-            p = self.embed_atompair_ref_pos(d) * v
+            # Next 3 multiplications are: "batch k w h atom_z" * "batch k w h 1" -> "batch k w h atom_z"
+            p: Float32[Tensor, "batch k w h atom_z=16"] = self.embed_atompair_ref_pos(d) * v
             p = p + self.embed_atompair_ref_dist(d_norm) * v
             p = p + self.embed_atompair_mask(v) * v
 
-            q = c
+            q: Float32[Tensor, "batch num_atoms atom_s"] = c
 
             if self.structure_prediction:
                 # run only in structure model not in initial encoding
-                atom_to_token = feats["atom_to_token"].float()
+                atom_to_token: Float32[Tensor, "batch num_atoms num_tokens"] = feats["atom_to_token"].float()
 
-                s_to_c = self.s_to_c_trans(s_trunk)
-                s_to_c = torch.bmm(atom_to_token, s_to_c)
+                # s_trunk shape:  (batch, num_tokens, token_s")
+                s_to_c: Float32[Tensor, "batch num_tokens atom_s"] = self.s_to_c_trans(s_trunk)
+                # (batch, num_atoms, num_tokens) @ # (batch, num_tokens, atom_s) -> (batch, num_atoms, atom_s)
+                s_to_c: Float32[Tensor, "batch num_atoms atom_s"] = torch.bmm(atom_to_token, s_to_c)
                 c = c + s_to_c
 
-                atom_to_token_queries = atom_to_token.view(b, K, W, atom_to_token.shape[-1])
-                atom_to_token_keys = to_keys(atom_to_token)
-                z_to_p = self.z_to_p_trans(z)
-                z_to_p = torch.einsum(
+                atom_to_token_queries: Float32[Tensor, "batch k w num_tokens"] = atom_to_token.view(
+                    batch, k, w, atom_to_token.shape[-1]
+                )
+                atom_to_token_keys: Float32[Tensor, "batch k h atom_s"] = to_keys(atom_to_token)
+                z_to_p: Float32[Tensor, "batch num_tokens num_tokens atom_z"] = self.z_to_p_trans(z)
+
+                # "batch num_tokens num_tokens atom_z", "batch k w num_tokens", "batch k h atom_s" -> "batch k w h atom_z"
+                z_to_p: Float32[Tensor, "batch k w h atom_z=16"] = torch.einsum(
                     "bijd,bwki,bwlj->bwkld",
                     z_to_p,
                     atom_to_token_queries,
@@ -460,8 +514,8 @@ class AtomAttentionEncoder(Module):
                 )
                 p = p + z_to_p
 
-            p = p + self.c_to_p_trans_q(c.view(b, K, W, 1, c.shape[-1]))
-            p = p + self.c_to_p_trans_k(to_keys(c).view(b, K, 1, H, c.shape[-1]))
+            p = p + self.c_to_p_trans_q(c.view(batch, k, w, 1, c.shape[-1]))
+            p = p + self.c_to_p_trans_k(to_keys(c).view(batch, k, 1, h, c.shape[-1]))
             p = p + self.p_mlp(p)
 
             if model_cache is not None:
@@ -480,7 +534,7 @@ class AtomAttentionEncoder(Module):
             # only here the multiplicity kicks in because we use the different positions r
             q = q.repeat_interleave(multiplicity, 0)
             r_input = torch.cat(
-                [r, torch.zeros((b * multiplicity, n, 7)).to(r)],
+                [r, torch.zeros((batch * multiplicity, n, 7)).to(r)],
                 dim=-1,
             )
             r_to_q = self.r_to_q_trans(r_input)

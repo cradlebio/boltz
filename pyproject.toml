@@ -30,7 +30,8 @@ dependencies = [
     "scipy==1.13.1",
     #"trifast>=0.1.11",
     "numba==0.61.0",
-    "jaxtyping"
+    "jaxtyping",
+    "pytest", # TODO: add to optional dependencies
 ]
 
 [project.scripts]
