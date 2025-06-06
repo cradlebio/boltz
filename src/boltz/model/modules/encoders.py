@@ -49,7 +49,7 @@ class RelativePositionEncoder(Module):
     chains and then pushing them through a linear layer.
     """
 
-    def __init__(self, token_z, r_max=32, s_max=2):
+    def __init__(self, token_z: int, r_max: int = 32, s_max: int = 2):
         """Initialize the relative position encoder.
 
         Params:
@@ -81,12 +81,12 @@ class RelativePositionEncoder(Module):
             feats["entity_id"][:, :, None],
             feats["entity_id"][:, None, :],
         )
-        # relative position of tokens within a chain
+        # relative position of tokens within their chains
         rel_pos: Int64[Tensor, "batch len len"] = (
             feats["residue_index"][:, :, None] - feats["residue_index"][:, None, :]
         )
         if torch.any(feats["cyclic_period"] != 0):
-            # set atoms that are part of a cyclic structure to 10_000, the rest are untouched
+            # set atoms that are not part of a cyclic structure to 10_000, the rest are untouched
             period: Int64[Tensor, "batch 1 len"] = torch.where(
                 feats["cyclic_period"] > 0,
                 feats["cyclic_period"],

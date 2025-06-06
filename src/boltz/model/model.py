@@ -312,7 +312,7 @@ class Boltz1(LightningModule):
 
             # Initialize the pairwise embeddings by projecting the sequence inputs twice and then
             # turning it into a matrix using broadcasting
-            z_init: Float["batch len len token_z"] = (
+            z_init: Float[Tensor, "batch len len token_z"] = (
                 self.z_init_1(s_inputs)[:, :, None]  # batch len 1 z_input_dim
                 + self.z_init_2(s_inputs)[:, None, :]  # batch 1 len z_input_dim
             )
@@ -336,8 +336,8 @@ class Boltz1(LightningModule):
                         torch.clear_autocast_cache()
 
                     # Apply recycling
-                    s = s_init + self.s_recycle(self.s_norm(s))
-                    z = z_init + self.z_recycle(self.z_norm(z))
+                    s: Float[Tensor, "batch len token_s"] = s_init + self.s_recycle(self.s_norm(s))
+                    z: Float[Tensor, "batch len len token_z"] = z_init + self.z_recycle(self.z_norm(z))
 
                     # Compute pairwise stack
                     if not self.no_msa:

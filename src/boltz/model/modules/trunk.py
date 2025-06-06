@@ -2,7 +2,7 @@ from typing import Any, Optional
 
 import torch
 from fairscale.nn.checkpoint.checkpoint_activations import checkpoint_wrapper
-from jaxtyping import Float32, Int64
+from jaxtyping import Bool, Float, Float32, Int64
 from torch import Tensor, nn
 
 from boltz.data import const
@@ -104,7 +104,9 @@ class InputEmbedder(nn.Module):
 
 
 class MSAModule(nn.Module):
-    """MSA module."""
+    """MSA module, which processes multiple sequence alignments (MSA) and pairwise embeddings.
+    It consists of `msa_blocks` MSA layers that called in sequence.
+    """
 
     def __init__(
         self,
@@ -122,33 +124,22 @@ class MSAModule(nn.Module):
         use_trifast: bool = False,
         **kwargs: Any,
     ) -> None:
-        """Initialize the MSA module.
+        """Initializes the MSA module.
 
-        Parameters
-        ----------
-        msa_s : int
-            The MSA embedding size.
-        token_z : int
-            The token pairwise embedding size.
-        s_input_dim : int
-            The input sequence dimension.
-        msa_blocks : int
-            The number of MSA blocks.
-        msa_dropout : float
-            The MSA dropout.
-        z_dropout : float
-            The pairwise dropout.
-        pairwise_head_width : int, optional
-            The pairwise head width, by default 32
-        pairwise_num_heads : int, optional
-            The number of pairwise heads, by default 4
-        activation_checkpointing : bool, optional
-            Whether to use activation checkpointing, by default False
-        use_paired_feature : bool, optional
-            Whether to use the paired feature, by default False
-        offload_to_cpu : bool, optional
-            Whether to offload to CPU, by default False
-
+        Args:
+            msa_s: The MSA embedding size (typically 64).
+            token_z: The token pairwise embedding size (typically 128).
+            s_input_dim: The input sequence dimension (typically 455).
+            msa_blocks: The number of MSA blocks (typically 4).
+            msa_dropout: The MSA dropout (typically 0.15).
+            z_dropout: The pairwise dropout (typically 0.25).
+            pairwise_head_width: The pairwise head width. Defaults to 32.
+            pairwise_num_heads: The number of pairwise heads. Defaults to 4.
+            activation_checkpointing: Whether to use activation checkpointing. Defaults to False.
+            use_paired_feature: Whether to use the paired feature. Defaults to False.
+            offload_to_cpu: Whether to offload to CPU. Defaults to False.
+            use_trifast: whether to use fast triangular attention. Defaults to False.
+            kwargs: extra keyword arguments (ignored).
         """
         super().__init__()
         del kwargs
@@ -159,29 +150,16 @@ class MSAModule(nn.Module):
 
         self.s_proj = nn.Linear(s_input_dim, msa_s, bias=False)
         self.msa_proj = nn.Linear(
-            const.num_tokens + 2 + int(use_paired_feature),
+            const.num_tokens + 2 + int(use_paired_feature),  # 33 + 2 + 1/0
             msa_s,
             bias=False,
         )
-        self.layers = nn.ModuleList()
-        for _ in range(msa_blocks):
-            if activation_checkpointing:
-                self.layers.append(
-                    checkpoint_wrapper(
-                        MSALayer(
-                            msa_s,
-                            token_z,
-                            msa_dropout,
-                            z_dropout,
-                            pairwise_head_width,
-                            pairwise_num_heads,
-                            use_trifast=use_trifast,
-                        ),
-                        offload_to_cpu=offload_to_cpu,
-                    )
-                )
-            else:
-                self.layers.append(
+        # create a no-op checkpoint wrapper if activation checkpointing is not used
+        maybe_checkpoint = checkpoint_wrapper if activation_checkpointing else lambda x, _: x
+
+        self.layers = nn.ModuleList(
+            [
+                maybe_checkpoint(
                     MSALayer(
                         msa_s,
                         token_z,
@@ -190,31 +168,28 @@ class MSAModule(nn.Module):
                         pairwise_head_width,
                         pairwise_num_heads,
                         use_trifast=use_trifast,
-                    )
+                    ),
+                    offload_to_cpu=offload_to_cpu,
                 )
+                for _ in range(msa_blocks)
+            ]
+        )
 
     def forward(
         self,
-        z: Tensor,
-        emb: Tensor,
+        z: Float[Tensor, "batch len len token_z"],
+        s_inputs: Float32[Tensor, "batch len embed=455"],
         feats: dict[str, Tensor],
-    ) -> Tensor:
+    ) -> Float[Tensor, "batch len len token_z"]:
         """Perform the forward pass.
 
-        Parameters
-        ----------
-        z : Tensor
-            The pairwise embeddings
-        emb : Tensor
-            The input embeddings
-        feats : dict[str, Tensor]
-            Input features
+        Args:
+            z: the pairwise embeddings
+            s_inputs: the input embeddings
+            feats: the input features
 
         Returns:
-        -------
-        Tensor
             The output pairwise embeddings.
-
         """
         # Set chunk sizes
         if not self.training:
@@ -238,13 +213,13 @@ class MSAModule(nn.Module):
             chunk_size_tri_attn = None
 
         # Load relevant features
-        msa = feats["msa"]
-        has_deletion = feats["has_deletion"].unsqueeze(-1)
-        deletion_value = feats["deletion_value"].unsqueeze(-1)
-        is_paired = feats["msa_paired"].unsqueeze(-1)
-        msa_mask = feats["msa_mask"]
-        token_mask = feats["token_pad_mask"].float()
-        token_mask = token_mask[:, :, None] * token_mask[:, None, :]
+        msa: Int64[Tensor, "batch msa_size len num_tokens=33"] = feats["msa"]
+        has_deletion: Bool[Tensor, "batch msa_size len 1"] = feats["has_deletion"].unsqueeze(-1)
+        deletion_value: Float32[Tensor, "batch msa_size len 1"] = feats["deletion_value"].unsqueeze(-1)
+        is_paired: Float32[Tensor, "batch msa_size len 1"] = feats["msa_paired"].unsqueeze(-1)
+        msa_mask: Int64[Tensor, "batch mas_size len"] = feats["msa_mask"]
+        token_mask: Float32[Tensor, "batch len"] = feats["token_pad_mask"].float()
+        token_mask: Float32[Tensor, "batch len len"] = token_mask[:, :, None] * token_mask[:, None, :]
 
         # Compute MSA embeddings
         if self.use_paired_feature:
@@ -253,11 +228,12 @@ class MSAModule(nn.Module):
             m = torch.cat([msa, has_deletion, deletion_value], dim=-1)
 
         # Compute input projections
-        m = self.msa_proj(m)
-        m = m + self.s_proj(emb).unsqueeze(1)
+        m: Float32["batch msa_size len msa_s=64"] = self.msa_proj(m)
+        m = m + self.s_proj(s_inputs).unsqueeze(1)
 
         # Perform MSA blocks
         for i in range(self.msa_blocks):
+            # z has shape (batch, len, len, token_z)
             z, m = self.layers[i](
                 z,
                 m,
@@ -285,23 +261,16 @@ class MSALayer(nn.Module):
         pairwise_num_heads: int = 4,
         use_trifast: bool = False,
     ) -> None:
-        """Initialize the MSA module.
+        """Initializes the MSA module.
 
-        Parameters
-        ----------
-        msa_s : int
-            The MSA embedding size.
-        token_z : int
-            The pair representation dimention.
-        msa_dropout : float
-            The MSA dropout.
-        z_dropout : float
-            The pair dropout.
-        pairwise_head_width : int, optional
-            The pairwise head width, by default 32
-        pairwise_num_heads : int, optional
-            The number of pairwise heads, by default 4
-
+        Args:
+            msa_s: The MSA embedding size.
+            token_z: The pair representation dimension.
+            msa_dropout: The MSA dropout.
+            z_dropout: The pair dropout.
+            pairwise_head_width: The pairwise head width. Defaults to 32.
+            pairwise_num_heads: The number of pairwise heads. Defaults to 4.
+            use_trifast: use fast triangular attention. Defaults to False.
         """
         super().__init__()
         self.use_trifast = use_trifast
