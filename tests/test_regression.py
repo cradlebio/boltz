@@ -7,8 +7,8 @@ import torch
 import torch.nn as nn
 from lightning_fabric import seed_everything
 
-from boltz.main import MODEL_URL
-from boltz.model.model import Boltz1
+from boltz.main import BOLTZ1_URL_WITH_FALLBACK
+from boltz.model.models.boltz1 import Boltz1
 
 tests_dir = Path(__file__).resolve().parent
 test_data_dir = tests_dir / "data"
@@ -19,8 +19,8 @@ class RegressionTester(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        cache = Path.expanduser("~/.boltz")
-        checkpoint_url = MODEL_URL
+        cache = Path.expanduser(Path("~/.boltz"))
+        checkpoint_url = BOLTZ1_URL_WITH_FALLBACK[1]
         model_name = checkpoint_url.split("/")[-1]
         checkpoint = cache / model_name
         if not Path.exists(checkpoint):
@@ -55,6 +55,7 @@ class RegressionTester(unittest.TestCase):
 
     def test_rel_pos(self):
         exp_rel_pos_encoding = self.regression_feats["relative_position_encoding"]
+        self.regression_feats["feats"]["cyclic_period"] = torch.zeros((1,), dtype=torch.int32)
         act_rel_pos_encoding = self.model_module.rel_pos(self.regression_feats["feats"])
 
         assert torch.allclose(exp_rel_pos_encoding, act_rel_pos_encoding, atol=1e-5)

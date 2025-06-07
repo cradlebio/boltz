@@ -415,10 +415,10 @@ class Boltz1(LightningModule):
 
     def get_true_coordinates(
         self,
-        batch,
-        out,
-        diffusion_samples,
-        symmetry_correction,
+        batch: dict[str, Tensor],
+        out: dict[str, Tensor],
+        diffusion_samples: int,
+        symmetry_correction: bool,
         lddt_minimization=True,
     ):
         if symmetry_correction:

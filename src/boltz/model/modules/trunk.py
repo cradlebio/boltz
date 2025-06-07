@@ -139,7 +139,8 @@ class MSAModule(nn.Module):
             pairwise_head_width: The pairwise head width. Defaults to 32.
             pairwise_num_heads: The number of pairwise heads. Defaults to 4.
             activation_checkpointing: Whether to use activation checkpointing. Defaults to False.
-            use_paired_feature: Whether to use the paired feature. Defaults to False.
+            use_paired_feature: if true, the MSA module will use `feats["msa_paired"]` to distinguish betwee
+                simple homologs, and homologs that are paired (e.g. in a complex).
             offload_to_cpu: Whether to offload to CPU. Defaults to False.
             subsample_msa: whether to subsample the MSA (for efficiency).
             kwargs: extra keyword arguments (ignored).
