@@ -2,6 +2,9 @@
 requires = ["setuptools >= 61.0"]
 build-backend = "setuptools.build_meta"
 
+[dependency-groups]
+dev = ["pytest>=8.1.1", "pytest-cov>=5.0"]
+
 [project]
 name = "boltz"
 version = "2.0.2"
@@ -18,23 +21,22 @@ dependencies = [
     "requests==2.32.3",
     "pandas>=2.2.2",
     "types-requests",
-    "einops==0.8.0",
+    "einops>=0.8.0",
     "einx==0.3.0",
-    "fairscale==0.4.13",
-    "mashumaro==3.14",
-    "modelcif==1.2",
-    "wandb==0.18.7",
-    "click==8.1.7",
-    "pyyaml==6.0.2",
-    "biopython==1.84",
-    "scipy==1.13.1",
+    "fairscale>=0.4.13",
+    "mashumaro>=3.14",
+    "modelcif>=1.2",
+    "wandb>=0.18.7",
+    "click>=8.1.7",
+    "pyyaml>=6.0.2",
+    "biopython>=1.84",
+    "scipy>=1.13.1",
     "trifast>=0.1.11; platform_system == 'Linux'",
-    "numba==0.61.0",
-    "gemmi==0.6.5",
-    "scikit-learn==1.6.1",
-    "chembl_structure_pipeline==1.2.2",
-    "jaxtyping",
-    "pytest", # TODO: add to optional dependencies
+    "numba>=0.61.0",
+    "gemmi>=0.6.5",
+    "scikit-learn>=1.6.1",
+    "chembl_structure_pipeline>=1.2.2",
+    "jaxtyping>=0.2.28",
 ]
 
 [project.scripts]

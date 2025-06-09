@@ -41,7 +41,7 @@ from boltz.model.optim.scheduler import AlphaFoldLRScheduler
 class Boltz1(LightningModule):
     """Boltz1 model."""
 
-    def __init__(  # noqa: D417
+    def __init__(
         self,
         atom_s: int,
         atom_z: int,
@@ -86,34 +86,44 @@ class Boltz1(LightningModule):
             atom_z: the atom pair embedding dimension.
             token_s: the single token embedding dimension.
             token_z: the pair embedding dimension.
-            num_bins:
-            training_args:
-            validation_args:
-            embedder_args:
-            msa_args:
-            pairformer_args:
-            score_model_args:
-            diffusion_process_args:
-            diffusion_loss_args:
-            confidence_model_args:
-            steering_args:
-            atom_feature_dim: the atom feature dimension.
-            confidence_prediction: whether to use confidence prediction.
-            confidence_imitate_trunk: whether to use the trunk of the model for confidence prediction.
-            alpha_pae: the weight for the PAE loss.
-            structure_prediction_training: whether to train the structure prediction module.
-            atoms_per_window_queries: the number of atoms per window for queries.
-            atoms_per_window_keys: the number of atoms per window for keys.
-            compile_pairformer: whether to compile the pairformer module.
-            compile_structure: whether to compile the structure module.
-            compile_confidence: whether to compile the confidence module.
-            nucleotide_rmsd_weight: the weight for the nucleotide RMSD.
-            ligand_rmsd_weight: the weight for the ligand RMSD.
-            no_msa: whether to use the MSA module.
-            no_atom_encoder: whether to use the atom encoder
-            min_dist:
-            max_dist:
-            predict_args: arguments for the prediction step.
+            num_bins: the number of bins used for distogram prediction
+            training_args: a dictionary containing arguments specific to the training loop,
+                such as recycling steps, diffusion multiplicity, etc.
+            validation_args: a dictionary containing arguments specific to the validation loop,
+                like sampling steps and symmetry correction.
+            embedder_args: a dictionary of arguments passed to the InputEmbedder module.
+            msa_args: a dictionary of arguments passed to the MSAModule
+            pairformer_args: a dictionary of arguments passed to the PairformerModule
+            score_model_args: a dictionary of arguments passed to the score model within the AtomDiffusion module
+            diffusion_process_args: a dictionary of arguments configuring the diffusion process itself,
+                within the AtomDiffusion module
+            diffusion_loss_args: a dictionary of arguments for configuring the diffusion loss calculation
+            confidence_model_args: a dictionary of arguments passed to the ConfidenceModule
+            atom_feature_dim: the atom feature dimension
+            confidence_prediction: whether to enable confidence prediction (e.g., pLDDT, pAE)
+            confidence_imitate_trunk: whether the confidence module should imitate the
+                trunk's architecture (otherwise it uses a simpler architecture)
+            alpha_pae: weight for the Predicted Aligned Error (PAE) loss component if computed
+            structure_prediction_training: whether the structure prediction module (diffusion model) is being trained
+                If `False`, only the confidence module will be enabled (assuming `confidence_prediction` is `True`)
+            atoms_per_window_queries: the number of atoms per window for query generation in atom-level attention
+            atoms_per_window_keys: The number of atoms per window for key generation in atom-level attention
+            compile_pairformer: whether to use `torch.compile` on the Pairformer module for optimization
+            compile_structure: whether to use `torch.compile` on the structure module (diffusion score model)
+                for optimization.
+            compile_confidence: whether to use `torch.compile` on the confidence module for optimization
+            nucleotide_rmsd_weight: the weighting factor applied to RMSD calculations for nucleotide residues
+            ligand_rmsd_weight: the weighting factor applied to RMSD calculations for ligand atoms
+            no_msa: whether to completely disable the MSA module
+            no_atom_encoder: whether to disable the atom encoder, in which case atom embeddings are zeroed
+            ema: whether to use Exponential Moving Average for model parameters
+            ema_decay: the decay rate for Exponential Moving Average
+            min_dist: the minimum distance (in Angstroms) used for distogram binning
+            max_dist: the maximum distance (in Angstroms) used for distogram binning
+            predict_args: optional dictionary of arguments specific to the prediction step (e.g., for inference time)
+            steering_args: optional dictionary of arguments for score-based steering in the diffusion process
+            use_trifast: whether to use an optimized (faster) implementation for triangular attention operations
+
         """
         super().__init__()
 

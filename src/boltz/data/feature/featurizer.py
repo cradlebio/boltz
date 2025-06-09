@@ -4,7 +4,7 @@ from typing import Optional
 
 import numpy as np
 import torch
-from jaxtyping import Float, Int64
+from jaxtyping import Bool, Float, Float32, Int64
 from torch import Tensor, from_numpy
 from torch.nn.functional import one_hot
 
@@ -310,20 +310,42 @@ def process_token_features(
     inference_binder: Optional[list[int]] = None,
     inference_pocket: Optional[list[tuple[int, int]]] = None,
 ) -> dict[str, Tensor]:
-    """Get the token features.
+    """Gets the token features.
 
-    Parameters
-    ----------
-    data : Tokenized
-        The tokenized data.
-    max_tokens : int
-        The maximum number of tokens.
+    Args:
+        data: The tokenized data, containing information about tokens (residues/atoms), their types,
+            indices, and structural context.
+        max_tokens: The maximum number of tokens to pad or truncate to. If None, the original number
+            of tokens is used. Defaults to None.
+        binder_pocket_conditioned_prop: The probability (between 0.0 and 1.0) of enabling binder/pocket
+            conditioning during training. Defaults to 0.0 (no conditioning).
+        binder_pocket_cutoff: The distance cutoff in Angstroms to define residues within a 'pocket'
+            around a chosen binder. Defaults to 6.0.
+        binder_pocket_sampling_geometric_p: The probability parameter 'p' for a geometric distribution
+            used to subsample pocket residues when conditioning is active. Defaults to 0.0.
+        only_ligand_binder_pocket: If true and binder/pocket conditioning is active, only non-polymer
+            (ligand) chains are considered as potential binders. Defaults to False.
+        inference_binder: During inference, a list of asym_ids specifying which chains are designated as
+            the binder. Defaults to None.
+        inference_pocket: During inference, a list of (asym_id, res_idx) tuples explicitly defining which
+            residues constitute the pocket. Defaults to None.
 
     Returns:
-    -------
-    dict[str, Tensor]
-        The token features.
-
+        A dictionary containing various token-level features:
+        - token_index: Sequential index for each token.
+        - residue_index: Residue index within its chain.
+        - asym_id: the chain each token belongs to.
+        - entity_id:  the entity (id of unique chains) each token belongs to.
+        - sym_id: the sym_id (id within identical chains) for each token.
+        - mol_type: molecular type (e.g., protein, DNA, non-polymer) for each token.
+        - res_type: one-hot encoded residue type for each token.
+        - disto_center: 3D coordinates of the representative atom for distogram calculation.
+        - token_bonds: Binary matrix indicating direct bonds between tokens.
+        - token_pad_mask: Mask indicating padded tokens.
+        - token_resolved_mask: Mask indicating resolved (non-missing) tokens.
+        - token_disto_mask: Mask for distogram calculation validity.
+        - pocket_feature: One-hot encoded feature indicating binder, pocket, or unselected residues.
+        - cyclic_period: The length of the cyclic component the token belongs to (0 if linear).
     """
     # Token data
     token_data = data.tokens
@@ -479,20 +501,43 @@ def process_atom_features(
     max_atoms: Optional[int] = None,
     max_tokens: Optional[int] = None,
 ) -> dict[str, Tensor]:
-    """Get the atom features.
+    """Gets the atom features.
 
-    Parameters
-    ----------
-    data : Tokenized
-        The tokenized data.
-    max_atoms : int, optional
-        The maximum number of atoms.
+    This function extracts and computes a rich set of atomic-level features,
+    including positions, types, charges, and spatial relationships (distogram),
+    for each atom in the molecule. It also handles padding and optional geometric transformations.
+
+    Args:
+        data: The tokenized data, containing atomic and token-level structural information.
+        atoms_per_window_queries: The desired number of atoms per window for queries, used primarily
+            for padding to a multiple of this value. Defaults to 32.
+        min_dist: The minimum distance in Angstroms for the distogram binning. Defaults to 2.0.
+        max_dist: The maximum distance in Angstroms for the distogram binning. Defaults to 22.0.
+        num_bins: The number of bins to use for discretizing distances in the distogram. Defaults to 64.
+        max_atoms: The maximum total number of atoms to pad or truncate to. If None, padding is applied to
+            the nearest multiple of `atoms_per_window_queries`. Defaults to None.
+        max_tokens: The maximum number of tokens. This is used for padding atom-to-token mapping features
+            if the token dimension exceeds this. Defaults to None.
 
     Returns:
-    -------
-    dict[str, Tensor]
-        The atom features.
-
+        A dictionary containing various atom-level features:
+        - ref_pos (Float[Tensor, "len 3"]): Reference atom 3D coordinates, potentially roto-translated.
+        - atom_resolved_mask (Bool[Tensor, "atom_len"]): Mask indicating which atoms have resolved coordinates.
+        - ref_element (Int64[Tensor, "atom_len num_elements=128"]): One-hot encoded element type for each atom.
+        - ref_charge (Int8[Tensor, "atom_len"]): Charge for each atom.
+        - ref_atom_name_chars (Int64[Tensor, f"atom_len 4 {num_bins}"]): One-hot encoded atom name characters.
+        - ref_space_uid (Int64[Tensor, "atom_len"]): Unique ID for each atom's reference space (e.g., chain/residue).
+        - coords (Float[Tensor, "? atom_len 3"]): Ground truth coordinates for atoms, typically centered.
+        - atom_pad_mask (Float32[Tensor, "atom_len"]): Mask indicating padded atom positions.
+        - atom_to_token (Int64[Tensor, "atom_len "]): One-hot mapping from atom index to its corresponding token index.
+        - token_to_rep_atom (Int64[Tensor, "token_len atom_len"]): One-hot mapping from token index to its
+            representative atom's index.
+        - r_set_to_rep_atom (Int64[Tensor, "token_len atom_len"]): One-hot mapping from the residue set index to
+            its representative atom's index.
+        - disto_target (Int64[Tensor, f"token_len token_len {num_bins}"]): The one-hot encoded distogram
+            target for the model.
+        - frames_idx (Float32[Tensor, "token_len 3"]): Indices of atoms forming local reference frames.
+        - frame_resolved_mask (Bool[Tensor, "token_len"]): Mask indicating which local reference frames are resolved.
     """
     # Filter to tokens' atoms
     atom_data = []
@@ -688,24 +733,24 @@ def process_msa_features(
     max_tokens: Optional[int] = None,
     pad_to_max_seqs: bool = False,
 ) -> dict[str, Tensor]:
-    """Get the MSA features.
+    """Builds MSA features from the tokenized data.
 
-    Parameters
-    ----------
-    data : Tokenized
-        The tokenized data.
-    max_seqs : int
-        The maximum number of MSA sequences.
-    max_tokens : int
-        The maximum number of tokens.
-    pad_to_max_seqs : bool
-        Whether to pad to the maximum number of sequences.
+    Args:
+        data: The tokenized data.
+        max_seqs_batch: The maximum number of sequences per batch.
+        max_seqs: The maximum number of MSA sequences.
+        max_tokens: The maximum number of tokens.
+        pad_to_max_seqs: Whether to pad to the maximum number of sequences.
 
     Returns:
-    -------
-    dict[str, Tensor]
-        The MSA features.
-
+        A dictionary containing the MSA features:
+        - msa (Int64[Tensor, "depth len num_tokens=33"]): The MSA sequences as one-hot encoded tensors.
+        - msa_paired (Float32[Tensor, "depth_paired len"]): The paired MSA sequences.
+        - deletion_value (Float32[Tensor, "depth len"]): The deletion values for each sequence.
+        - has_deletion (Bool[Tensor, "depth len"]): A mask indicating deleted positions in each MSA sequence
+        - deletion_mean (Float32[Tensor, "len"]): average number of deletions for each position in the MSA.
+        - profile: The token distribution profile for each position in the MSA (adds up to 1 for each position).
+        - msa_mask (Int64[Tensor, "depth len"]): A mask indicating valid positions in the MSA sequences.
     """
     # Created paired MSA
     msa, deletion, paired = construct_paired_msa(data, max_seqs_batch)
@@ -716,13 +761,13 @@ def process_msa_features(
     )  # (N_MSA, N_RES, N_AA)
 
     # Prepare features
-    msa = torch.nn.functional.one_hot(msa, num_classes=const.num_tokens)
-    msa_mask = torch.ones_like(msa[:, :, 0])
-    profile = msa.float().mean(dim=0)
-    has_deletion = deletion > 0
+    msa: Int64[Tensor, f"depth len {const.num_tokens}"] = torch.nn.functional.one_hot(msa, num_classes=const.num_tokens)
+    msa_mask: Int64[Tensor, "depth len"] = torch.ones_like(msa[:, :, 0])
+    profile: Float32[Tensor, f"len {const.num_tokens}"] = msa.float().mean(dim=0)
+    has_deletion: Bool[Tensor, "depth len"] = deletion > 0
     # bind the deletion values to [0, pi/2]
-    deletion = np.pi / 2 * np.arctan(deletion / 3)
-    deletion_mean = deletion.mean(axis=0)
+    deletion: Float32[Tensor, "depth len"] = np.pi / 2 * np.arctan(deletion / 3)
+    deletion_mean: Float32[Tensor, " len"] = deletion.mean(axis=0)
 
     # Pad in the MSA dimension (dim=0)
     if pad_to_max_seqs:

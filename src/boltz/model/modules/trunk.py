@@ -161,8 +161,12 @@ class MSAModule(nn.Module):
             msa_s,
             bias=False,
         )
-        # create a no-op checkpoint wrapper if activation checkpointing is not used
-        maybe_checkpoint = checkpoint_wrapper if activation_checkpointing else lambda x, _: x
+
+        def no_op_checkpoint_wrapper(module: nn.Module, offload_to_cpu: bool) -> nn.Module:
+            del offload_to_cpu
+            return module
+
+        maybe_checkpoint = checkpoint_wrapper if activation_checkpointing else no_op_checkpoint_wrapper
 
         self.layers = nn.ModuleList(
             [
@@ -188,7 +192,8 @@ class MSAModule(nn.Module):
         feats: dict[str, Tensor],
         use_trifast: bool = False,
     ) -> Float[Tensor, "batch len len token_z"]:
-        """Perform the forward pass.
+        """Processes MSA features and pairwise embeddings through a series of MSA layers
+        to refine the pairwise representation. It integrates information from both the MSA and sequence inputs.
 
         Args:
             z: the pairwise embeddings
@@ -224,7 +229,7 @@ class MSAModule(nn.Module):
         has_deletion: Bool[Tensor, "batch msa_size len 1"] = feats["has_deletion"].unsqueeze(-1)
         deletion_value: Float32[Tensor, "batch msa_size len 1"] = feats["deletion_value"].unsqueeze(-1)
         is_paired: Float32[Tensor, "batch msa_size len 1"] = feats["msa_paired"].unsqueeze(-1)
-        msa_mask: Int64[Tensor, "batch mas_size len"] = feats["msa_mask"]
+        msa_mask: Int64[Tensor, "batch msa_size len"] = feats["msa_mask"]
         token_mask: Float32[Tensor, "batch len"] = feats["token_pad_mask"].float()
         token_mask: Float32[Tensor, "batch len len"] = token_mask[:, :, None] * token_mask[:, None, :]
 
@@ -310,37 +315,44 @@ class MSALayer(nn.Module):
 
     def forward(
         self,
-        z: Tensor,
-        m: Tensor,
-        token_mask: Tensor,
-        msa_mask: Tensor,
+        z: Float32[Tensor, "batch len len token_z"],
+        m: Float32[Tensor, "batch msa_size len msa_s"],
+        token_mask: Float32[Tensor, "batch len len"],
+        msa_mask: Int64[Tensor, "batch msa_size len"],
         chunk_heads_pwa: bool = False,
         chunk_size_transition_z: Optional[int] = None,
         chunk_size_transition_msa: Optional[int] = None,
         chunk_size_outer_product: Optional[int] = None,
         chunk_size_tri_attn: Optional[int] = None,
         use_trifast: bool = False,
-    ) -> tuple[Tensor, Tensor]:
-        """Perform the forward pass.
+    ) -> tuple[Float32[Tensor, "batch len len token_z"], Float32[Tensor, "batch msa_size len msa_s"]]:
+        """Performs the forward pass of a single MSA layer.
 
-        Parameters
-        ----------
-        z : Tensor
-            The pair representation
-        m : Tensor
-            The msa representation
-        token_mask : Tensor
-            The token mask
-        msa_mask : dict[str, Tensor]
-            The MSA mask
+        This layer updates both the MSA representation (`m`) and the pairwise representation (`z`)
+        through a series of attention, multiplicative, and transition operations, facilitating communication
+        between the two representations.
+
+        Args:
+            z: The current pairwise representation tensor
+            m: The current MSA representation tensor
+            token_mask: A boolean mask for valid tokens (sequence positions), typically used for padding.
+            msa_mask: A boolean mask for valid MSA sequences, typically used for padding.
+            chunk_heads_pwa: A boolean indicating whether to chunk heads in PairWeightedAveraging for memory
+                efficiency
+            chunk_size_transition_z: the chunk size for the pairwise transition operation.
+                If None, no chunking is applied.
+            chunk_size_transition_msa: the chunk size for the MSA transition operation. If None, no chunking is applied.
+            chunk_size_outer_product: the chunk size for the outer product mean operation.
+                If None, no chunking is applied.
+            chunk_size_tri_attn: the chunk size for triangular attention operations.
+                If None, no chunking is applied.
+            use_trifast: A boolean indicating whether to use an optimized (faster) implementation for
+                triangular attention operations. Defaults to False.
 
         Returns:
-        -------
-        Tensor
-            The output pairwise embeddings.
-        Tensor
-            The output MSA embeddings.
-
+            A tuple containing:
+            - z: The updated pairwise representation tensor.
+            - m: The updated MSA representation tensor.
         """
         # Communication to MSA stack
         msa_dropout = get_dropout_mask(self.msa_dropout, m, self.training)
