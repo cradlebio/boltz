@@ -565,7 +565,7 @@ class TemplateInfo:
 
 
 @dataclass(frozen=True)
-class Record(JSONSerializable["Record"]):
+class Record(JSONSerializable):
     """Record datatype."""
 
     id: str
