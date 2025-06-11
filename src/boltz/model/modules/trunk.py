@@ -377,7 +377,7 @@ class MSALayer(nn.Module):
             use_trifast=use_trifast,
         )
 
-        dropout = get_dropout_mask(self.z_dropout, z, self.training, columnwise=True)
+        dropout = get_dropout_mask(self.z_dropout, z, self.training, column_wise=True)
         z = z + dropout * self.tri_att_end(
             z,
             mask=token_mask,
@@ -595,7 +595,7 @@ class PairformerLayer(nn.Module):
             use_trifast=use_trifast,
         )
 
-        dropout = get_dropout_mask(self.dropout, z, self.training, columnwise=True)
+        dropout = get_dropout_mask(self.dropout, z, self.training, column_wise=True)
         z = z + dropout * self.tri_att_end(
             z,
             mask=pair_mask,
