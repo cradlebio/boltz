@@ -1016,7 +1016,7 @@ class Boltz2(LightningModule):
                 gc.collect()
                 return {"exception": True}
             else:
-                raise {"exception": True} from None
+                raise
         return pred_dict
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
