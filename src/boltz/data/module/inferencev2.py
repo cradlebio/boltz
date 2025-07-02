@@ -7,7 +7,6 @@ import pytorch_lightning as pl
 import torch
 from torch import Tensor
 from torch.utils.data import DataLoader
-from typing_extensions import override
 
 from boltz.data import const
 from boltz.data.crop.affinity import AffinityCropper
@@ -53,7 +52,7 @@ def load_input(
     affinity : bool
         Whether to load the affinity data.
 
-    Returns:
+    Returns
     -------
     Input
         The loaded input.
@@ -61,7 +60,9 @@ def load_input(
     """
     # Load the structure
     if affinity:
-        structure = StructureV2.load(target_dir / record.id / f"pre_affinity_{record.id}.npz")
+        structure = StructureV2.load(
+            target_dir / record.id / f"pre_affinity_{record.id}.npz"
+        )
     else:
         structure = StructureV2.load(target_dir / f"{record.id}.npz")
 
@@ -86,7 +87,9 @@ def load_input(
     # Load residue constraints
     residue_constraints = None
     if constraints_dir is not None:
-        residue_constraints = ResidueConstraints.load(constraints_dir / f"{record.id}.npz")
+        residue_constraints = ResidueConstraints.load(
+            constraints_dir / f"{record.id}.npz"
+        )
 
     # Load extra molecules
     extra_mols = {}
@@ -94,7 +97,7 @@ def load_input(
         extra_mol_path = extra_mols_dir / f"{record.id}.pkl"
         if extra_mol_path.exists():
             with extra_mol_path.open("rb") as f:
-                extra_mols = pickle.load(f)
+                extra_mols = pickle.load(f)  # noqa: S301
 
     return Input(
         structure,
@@ -114,16 +117,12 @@ def collate(data: list[dict[str, Tensor]]) -> dict[str, Tensor]:
     data : List[Dict[str, Tensor]]
         The data to collate.
 
-    Returns:
+    Returns
     -------
     Dict[str, Tensor]
         The collated data.
 
     """
-    # eliminate None entries
-    data = [d for d in data if d is not None]
-    if len(data) == 0:
-        raise RuntimeError("Could not collate data: no valid entries found.")
     # Get the keys
     keys = data[0].keys()
 
@@ -132,7 +131,7 @@ def collate(data: list[dict[str, Tensor]]) -> dict[str, Tensor]:
     for key in keys:
         values = [d[key] for d in data]
 
-        if key not in {
+        if key not in [
             "all_coords",
             "all_resolved_mask",
             "crop_to_all_atom_map",
@@ -141,7 +140,7 @@ def collate(data: list[dict[str, Tensor]]) -> dict[str, Tensor]:
             "ligand_symmetries",
             "record",
             "affinity_mw",
-        }:
+        ]:
             # Check if all have the same shape
             shape = values[0].shape
             if not all(v.shape == shape for v in values):
@@ -207,7 +206,7 @@ class PredictionDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx: int) -> dict:
         """Get an item from the dataset.
 
-        Returns:
+        Returns
         -------
         Dict[str, Tensor]
             The sampled data features.
@@ -231,8 +230,10 @@ class PredictionDataset(torch.utils.data.Dataset):
         try:
             tokenized = self.tokenizer.tokenize(input_data)
         except Exception as e:  # noqa: BLE001
-            print(f"Tokenizer failed on {record.id} with error {e}. Skipping.")
-            return None
+            print(  # noqa: T201
+                f"Tokenizer failed on {record.id} with error {e}. Skipping."
+            )
+            return self.__getitem__(0)
 
         if self.affinity:
             try:
@@ -242,8 +243,8 @@ class PredictionDataset(torch.utils.data.Dataset):
                     max_atoms=2048,
                 )
             except Exception as e:  # noqa: BLE001
-                print(f"Cropper failed on {record.id} with error {e}. Skipping.")
-                return None
+                print(f"Cropper failed on {record.id} with error {e}. Skipping.")  # noqa: T201
+                return self.__getitem__(0)
 
         # Load conformers
         try:
@@ -255,7 +256,7 @@ class PredictionDataset(torch.utils.data.Dataset):
             molecules.update(load_molecules(self.mol_dir, mol_names))
         except Exception as e:  # noqa: BLE001
             print(f"Molecule loading failed for {record.id} with error {e}. Skipping.")
-            return None
+            return self.__getitem__(0)
 
         # Inference specific options
         options = record.inference_options
@@ -290,8 +291,8 @@ class PredictionDataset(torch.utils.data.Dataset):
             import traceback
 
             traceback.print_exc()
-            print(f"Featurizer failed on {record.id} with error {e}. Skipping.")
-            return None
+            print(f"Featurizer failed on {record.id} with error {e}. Skipping.")  # noqa: T201
+            return self.__getitem__(0)
 
         # Add record
         features["record"] = record
@@ -300,7 +301,7 @@ class PredictionDataset(torch.utils.data.Dataset):
     def __len__(self) -> int:
         """Get the length of the dataset.
 
-        Returns:
+        Returns
         -------
         int
             The length of the dataset.
@@ -364,7 +365,7 @@ class Boltz2InferenceDataModule(pl.LightningDataModule):
     def predict_dataloader(self) -> DataLoader:
         """Get the training dataloader.
 
-        Returns:
+        Returns
         -------
         DataLoader
             The training dataloader.
@@ -390,12 +391,11 @@ class Boltz2InferenceDataModule(pl.LightningDataModule):
             collate_fn=collate,
         )
 
-    @override
     def transfer_batch_to_device(
         self,
         batch: dict,
         device: torch.device,
-        dataloader_idx: int,
+        dataloader_idx: int,  # noqa: ARG002
     ) -> dict:
         """Transfer a batch to the given device.
 
@@ -408,14 +408,14 @@ class Boltz2InferenceDataModule(pl.LightningDataModule):
         dataloader_idx : int
             The dataloader index.
 
-        Returns:
+        Returns
         -------
         np.Any
             The transferred batch.
 
         """
-        for key, value in batch.items():
-            if key not in {
+        for key in batch:
+            if key not in [
                 "all_coords",
                 "all_resolved_mask",
                 "crop_to_all_atom_map",
@@ -424,6 +424,6 @@ class Boltz2InferenceDataModule(pl.LightningDataModule):
                 "ligand_symmetries",
                 "record",
                 "affinity_mw",
-            }:
-                batch[key] = value.to(device)
+            ]:
+                batch[key] = batch[key].to(device)
         return batch
