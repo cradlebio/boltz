@@ -169,21 +169,23 @@ def download_boltz1(cache: Path) -> None:
     ccd = cache / "ccd.pkl"
     if not ccd.exists():
         click.echo(
-            f"Downloading the CCD dictionary to {ccd}. You may change the cache directory with the --cache flag."
+            f"Downloading the CCD dictionary to {ccd}. You may "
+            "change the cache directory with the --cache flag."
         )
-        urllib.request.urlretrieve(CCD_URL, str(ccd))
+        urllib.request.urlretrieve(CCD_URL, str(ccd))  # noqa: S310
 
     # Download model
     model = cache / "boltz1_conf.ckpt"
     if not model.exists():
         click.echo(
-            f"Downloading the model weights to {model}. You may change the cache directory with the --cache flag."
+            f"Downloading the model weights to {model}. You may "
+            "change the cache directory with the --cache flag."
         )
         for i, url in enumerate(BOLTZ1_URL_WITH_FALLBACK):
             try:
-                urllib.request.urlretrieve(url, str(model))
+                urllib.request.urlretrieve(url, str(model))  # noqa: S310
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 if i == len(BOLTZ1_URL_WITH_FALLBACK) - 1:
                     msg = f"Failed to download model from all URLs. Last error: {e}"
                     raise RuntimeError(msg) from e
@@ -209,21 +211,22 @@ def download_boltz2(cache: Path) -> None:
             "This may take a bit of time. You may change the cache directory "
             "with the --cache flag."
         )
-        urllib.request.urlretrieve(MOL_URL, str(tar_mols))
+        urllib.request.urlretrieve(MOL_URL, str(tar_mols))  # noqa: S310
         with tarfile.open(str(tar_mols), "r") as tar:
-            tar.extractall(cache)
+            tar.extractall(cache)  # noqa: S202
 
     # Download model
     model = cache / "boltz2_conf.ckpt"
     if not model.exists():
         click.echo(
-            f"Downloading the Boltz-2 weights to {model}. You may change the cache directory with the --cache flag."
+            f"Downloading the Boltz-2 weights to {model}. You may "
+            "change the cache directory with the --cache flag."
         )
         for i, url in enumerate(BOLTZ2_URL_WITH_FALLBACK):
             try:
-                urllib.request.urlretrieve(url, str(model))
+                urllib.request.urlretrieve(url, str(model))  # noqa: S310
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 if i == len(BOLTZ2_URL_WITH_FALLBACK) - 1:
                     msg = f"Failed to download model from all URLs. Last error: {e}"
                     raise RuntimeError(msg) from e
@@ -238,9 +241,9 @@ def download_boltz2(cache: Path) -> None:
         )
         for i, url in enumerate(BOLTZ2_AFFINITY_URL_WITH_FALLBACK):
             try:
-                urllib.request.urlretrieve(url, str(affinity_model))
+                urllib.request.urlretrieve(url, str(affinity_model))  # noqa: S310
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 if i == len(BOLTZ2_AFFINITY_URL_WITH_FALLBACK) - 1:
                     msg = f"Failed to download model from all URLs. Last error: {e}"
                     raise RuntimeError(msg) from e
@@ -250,7 +253,7 @@ def download_boltz2(cache: Path) -> None:
 def get_cache_path() -> str:
     """Determine the cache path, prioritising the BOLTZ_CACHE environment variable.
 
-    Returns:
+    Returns
     -------
     str: Path
         Path to use for boltz cache location.
@@ -275,7 +278,7 @@ def check_inputs(data: Path) -> list[Path]:
     data : Path
         The input data.
 
-    Returns:
+    Returns
     -------
     list[Path]
         The list of input data.
@@ -293,8 +296,11 @@ def check_inputs(data: Path) -> list[Path]:
             if d.is_dir():
                 msg = f"Found directory {d} instead of .fasta or .yaml."
                 raise RuntimeError(msg)
-            if d.suffix not in {".fa", ".fas", ".fasta", ".yml", ".yaml"}:
-                msg = f"Unable to parse filetype {d.suffix}, please provide a .fasta or .yaml file."
+            if d.suffix not in (".fa", ".fas", ".fasta", ".yml", ".yaml"):
+                msg = (
+                    f"Unable to parse filetype {d.suffix}, "
+                    "please provide a .fasta or .yaml file."
+                )
                 raise RuntimeError(msg)
     else:
         data = [data]
@@ -318,7 +324,7 @@ def filter_inputs_structure(
     override: bool
         Whether to override existing predictions.
 
-    Returns:
+    Returns
     -------
     Manifest
         The manifest of the filtered input data.
@@ -362,7 +368,7 @@ def filter_inputs_affinity(
     override: bool
         Whether to override existing predictions.
 
-    Returns:
+    Returns
     -------
     Manifest
         The manifest of the filtered input data.
@@ -374,7 +380,8 @@ def filter_inputs_affinity(
     existing = {
         r.id
         for r in manifest.records
-        if r.affinity and (outdir / "predictions" / r.id / f"affinity_{r.id}.json").exists()
+        if r.affinity
+        and (outdir / "predictions" / r.id / f"affinity_{r.id}.json").exists()
     }
 
     # Remove them from the input data
@@ -467,7 +474,7 @@ def compute_msa(
             f.write("\n".join(csv_str))
 
 
-def process_input(
+def process_input(  # noqa: C901, PLR0912, PLR0915, D103
     path: Path,
     ccd: dict,
     msa_dir: Path,
@@ -486,16 +493,19 @@ def process_input(
 ) -> None:
     try:
         # Parse data
-        if path.suffix in {".fa", ".fas", ".fasta"}:
+        if path.suffix in (".fa", ".fas", ".fasta"):
             target = parse_fasta(path, ccd, mol_dir, boltz2)
-        elif path.suffix in {".yml", ".yaml"}:
+        elif path.suffix in (".yml", ".yaml"):
             target = parse_yaml(path, ccd, mol_dir, boltz2)
         elif path.is_dir():
             msg = f"Found directory {path} instead of .fasta or .yaml, skipping."
-            raise RuntimeError(msg)
+            raise RuntimeError(msg)  # noqa: TRY301
         else:
-            msg = f"Unable to parse filetype {path.suffix}, please provide a .fasta or .yaml file."
-            raise RuntimeError(msg)
+            msg = (
+                f"Unable to parse filetype {path.suffix}, "
+                "please provide a .fasta or .yaml file."
+            )
+            raise RuntimeError(msg)  # noqa: TRY301
 
         # Get target id
         target_id = target.record.id
@@ -518,7 +528,7 @@ def process_input(
         # Generate MSA
         if to_generate and not use_msa_server:
             msg = "Missing MSA's in input and --use_msa_server flag not set."
-            raise RuntimeError(msg)
+            raise RuntimeError(msg)  # noqa: TRY301
 
         if to_generate:
             msg = f"Generating MSA for {path} with {len(to_generate)} protein entities."
@@ -539,7 +549,7 @@ def process_input(
             msa_path = Path(msa_id)
             if not msa_path.exists():
                 msg = f"MSA file {msa_path} not found."
-                raise FileNotFoundError(msg)
+                raise FileNotFoundError(msg)  # noqa: TRY301
 
             # Dump processed MSA
             processed = processed_msa_dir / f"{target_id}_{msa_idx}.npz"
@@ -556,7 +566,7 @@ def process_input(
                     msa: MSA = parse_csv(msa_path, max_seqs=max_msa_seqs)
                 else:
                     msg = f"MSA file {msa_path} not supported, only a3m or csv."
-                    raise RuntimeError(msg)
+                    raise RuntimeError(msg)  # noqa: TRY301
 
                 msa.dump(processed)
 
@@ -592,7 +602,7 @@ def process_input(
         import traceback
 
         traceback.print_exc()
-        print(f"Failed to process {path}. Skipping. Error: {e}.")
+        print(f"Failed to process {path}. Skipping. Error: {e}.")  # noqa: T201
 
 
 @rank_zero_only
@@ -627,7 +637,7 @@ def process_inputs(
     preprocessing_threads: int, optional
         The number of threads to use for preprocessing, by default 1.
 
-    Returns:
+    Returns
     -------
     Manifest
         The manifest of the processed input data.
@@ -645,7 +655,9 @@ def process_inputs(
 
         # Nothing to do, update the manifest and return
         if data:
-            click.echo(f"Found {len(existing)} existing processed inputs, skipping them.")
+            click.echo(
+                f"Found {len(existing)} existing processed inputs, skipping them."
+            )
         else:
             click.echo("All inputs are already processed.")
             updated_manifest = Manifest(existing)
@@ -677,7 +689,7 @@ def process_inputs(
         ccd = load_canonicals(mol_dir)
     else:
         with ccd_path.open("rb") as file:
-            ccd = pickle.load(file)
+            ccd = pickle.load(file)  # noqa: S301
 
     # Create partial function
     process_input_partial = partial(
@@ -733,7 +745,10 @@ def cli() -> None:
 @click.option(
     "--cache",
     type=click.Path(exists=False),
-    help=("The directory where to download the data and model. Default is ~/.boltz, or $BOLTZ_CACHE if set."),
+    help=(
+        "The directory where to download the data and model. "
+        "Default is ~/.boltz, or $BOLTZ_CACHE if set."
+    ),
     default=get_cache_path,
 )
 @click.option(
@@ -840,7 +855,10 @@ def cli() -> None:
 @click.option(
     "--msa_pairing_strategy",
     type=str,
-    help=("Pairing strategy to use. Used only if --use_msa_server is set. Options are 'greedy' and 'complete'"),
+    help=(
+        "Pairing strategy to use. Used only if --use_msa_server is set. "
+        "Options are 'greedy' and 'complete'"
+    ),
     default="greedy",
 )
 @click.option(
@@ -912,7 +930,7 @@ def cli() -> None:
     is_flag=True,
     help="Whether to not use trifast kernels for triangular updates. Default False",
 )
-def predict(
+def predict(  # noqa: C901, PLR0915, PLR0912
     data: str,
     out_dir: str,
     cache: str = "~/.boltz",
@@ -1031,20 +1049,38 @@ def predict(
         manifest=filtered_manifest,
         targets_dir=processed_dir / "structures",
         msa_dir=processed_dir / "msa",
-        constraints_dir=((processed_dir / "constraints") if (processed_dir / "constraints").exists() else None),
-        template_dir=((processed_dir / "templates") if (processed_dir / "templates").exists() else None),
-        extra_mols_dir=((processed_dir / "mols") if (processed_dir / "mols").exists() else None),
+        constraints_dir=(
+            (processed_dir / "constraints")
+            if (processed_dir / "constraints").exists()
+            else None
+        ),
+        template_dir=(
+            (processed_dir / "templates")
+            if (processed_dir / "templates").exists()
+            else None
+        ),
+        extra_mols_dir=(
+            (processed_dir / "mols") if (processed_dir / "mols").exists() else None
+        ),
     )
 
     # Set up trainer
     strategy = "auto"
-    if (isinstance(devices, int) and devices > 1) or (isinstance(devices, list) and len(devices) > 1):
+    if (isinstance(devices, int) and devices > 1) or (
+        isinstance(devices, list) and len(devices) > 1
+    ):
         start_method = "fork" if platform.system() != "win32" else "spawn"
         strategy = DDPStrategy(start_method=start_method)
         if len(filtered_manifest.records) < devices:
-            msg = "Number of requested devices is greater than the number of predictions, taking the minimum."
+            msg = (
+                "Number of requested devices is greater "
+                "than the number of predictions, taking the minimum."
+            )
             click.echo(msg)
-            devices = max(1, min(len(filtered_manifest.records), devices))
+            if isinstance(devices, list):
+                devices = devices[: max(1, len(filtered_manifest.records))]
+            else:
+                devices = max(1, min(len(filtered_manifest.records), devices))
 
     # Set up model parameters
     if model == "boltz2":
